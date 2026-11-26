@@ -11,6 +11,7 @@ import 'models/diary.dart';
 import 'models/roster.dart';
 import 'models/test.dart';
 import 'models/user.dart';
+import 'unit_repository.dart';
 
 /// Overridden in main() and in tests.
 final authRepositoryProvider = Provider<AuthRepository>((ref) => DemoAuthRepository());
@@ -78,36 +79,116 @@ class ThemeModeController extends Notifier<ThemeMode> {
 }
 
 // ---------------------------------------------------------------------------
-// Unit content (demo data in Phase 0; Supabase-backed in Phase 1)
+// Live data
+// ---------------------------------------------------------------------------
+
+/// Builds the live repository for a signed-in member. Overridden in main()
+/// when a backend is configured, and in tests with a fake.
+final unitRepositoryFactoryProvider = Provider<UnitRepository Function(AppUser user)?>((ref) => null);
+
+/// The live repository, or null in sample mode (demo build, "Explore with
+/// sample data", or a member who hasn't joined a unit yet).
+final unitRepositoryProvider = Provider<UnitRepository?>((ref) {
+  final factory = ref.watch(unitRepositoryFactoryProvider);
+  final user = ref.watch(authControllerProvider);
+  if (factory == null || user == null || user.isSample || user.unitId == null) return null;
+  return factory(user);
+});
+
+/// True when the screens show the unit's real data.
+final isLiveProvider = Provider<bool>((ref) => ref.watch(unitRepositoryProvider) != null);
+
+/// The latest problem loading live data, shown as a banner until it clears.
+final syncIssueProvider = NotifierProvider<SyncIssueController, String?>(SyncIssueController.new);
+
+class SyncIssueController extends Notifier<String?> {
+  @override
+  String? build() => null;
+
+  void report(Object error) => state = error is UnitDataFailure ? error.message : 'Some data could not be loaded.';
+  void clear() => state = null;
+}
+
+/// Shared shape for lists that come from demo data or from Supabase.
+abstract class LiveListController<T> extends Notifier<List<T>> {
+  List<T> demo();
+  Future<List<T>> fetch(UnitRepository repo);
+
+  UnitRepository? get repo => ref.read(unitRepositoryProvider);
+
+  @override
+  List<T> build() {
+    final live = ref.watch(unitRepositoryProvider);
+    if (live == null) return demo();
+    Future.microtask(() => reload(live));
+    return const [];
+  }
+
+  Future<void> reload([UnitRepository? r]) async {
+    final live = r ?? repo;
+    if (live == null) return;
+    try {
+      final items = await fetch(live);
+      if (ref.mounted) state = items;
+    } catch (e) {
+      if (ref.mounted) ref.read(syncIssueProvider.notifier).report(e);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Unit content
 // ---------------------------------------------------------------------------
 final announcementsProvider =
     NotifierProvider<AnnouncementsController, List<Announcement>>(AnnouncementsController.new);
 
-class AnnouncementsController extends Notifier<List<Announcement>> {
+class AnnouncementsController extends LiveListController<Announcement> {
   @override
-  List<Announcement> build() => DemoData.announcements(ref.read(clockProvider)());
+  List<Announcement> demo() => DemoData.announcements(ref.read(clockProvider)());
 
-  void post({required String title, required String body, required String author, bool pinned = false}) {
-    final a = Announcement(
-      id: 'a${DateTime.now().microsecondsSinceEpoch}',
-      title: title,
-      body: body,
-      author: author,
-      createdAt: ref.read(clockProvider)(),
-      pinned: pinned,
-    );
-    state = [a, ...state];
+  @override
+  Future<List<Announcement>> fetch(UnitRepository repo) => repo.announcements();
+
+  /// Posts to the unit (live) or adds locally (sample). Throws [UnitDataFailure] on failure.
+  Future<void> post({required String title, required String body, required String author, bool pinned = false}) async {
+    final live = repo;
+    if (live != null) {
+      await live.postAnnouncement(title: title, body: body, pinned: pinned);
+      await reload(live);
+      return;
+    }
+    state = [
+      Announcement(
+        id: 'a${DateTime.now().microsecondsSinceEpoch}',
+        title: title,
+        body: body,
+        author: author,
+        createdAt: ref.read(clockProvider)(),
+        pinned: pinned,
+      ),
+      ...state,
+    ];
   }
 }
 
 final eventsProvider = NotifierProvider<EventsController, List<CalendarEvent>>(EventsController.new);
 
-class EventsController extends Notifier<List<CalendarEvent>> {
+class EventsController extends LiveListController<CalendarEvent> {
   @override
-  List<CalendarEvent> build() => DemoData.events(ref.read(clockProvider)());
+  List<CalendarEvent> demo() => DemoData.events(ref.read(clockProvider)());
 
-  void add(CalendarEvent e) =>
-      state = [...state, e]..sort((a, b) => a.startsAt.compareTo(b.startsAt));
+  @override
+  Future<List<CalendarEvent>> fetch(UnitRepository repo) => repo.events();
+
+  Future<void> add(CalendarEvent e) async {
+    final live = repo;
+    if (live != null) {
+      await live.addEvent(e);
+      await reload(live);
+      return;
+    }
+    state = [...state, e]..sort((a, b) => a.startsAt.compareTo(b.startsAt));
+  }
 }
 
 /// Upcoming events, soonest first.
@@ -124,20 +205,42 @@ final nextExamProvider = Provider<CalendarEvent?>((ref) {
   return null;
 });
 
-final questionBankProvider = Provider<List<Question>>((ref) => DemoData.questions);
+/// Questions cadets practise with: the starter set in sample mode, the
+/// unit's approved questions when live.
+final questionBankProvider =
+    NotifierProvider<QuestionBankController, List<Question>>(QuestionBankController.new);
 
+class QuestionBankController extends LiveListController<Question> {
+  @override
+  List<Question> demo() => DemoData.questions;
+
+  @override
+  Future<List<Question>> fetch(UnitRepository repo) => repo.approvedQuestions();
+}
+
+/// Tests hosted by the unit. Sample only for now; live hosted tests come next.
 final testsProvider = NotifierProvider<TestsController, List<TestDefinition>>(TestsController.new);
 
 class TestsController extends Notifier<List<TestDefinition>> {
   @override
-  List<TestDefinition> build() => DemoData.tests(ref.read(clockProvider)());
+  List<TestDefinition> build() =>
+      ref.watch(isLiveProvider) ? const [] : DemoData.tests(ref.read(clockProvider)());
 
   void add(TestDefinition t) => state = [t, ...state];
 }
 
 final rosterProvider = Provider<List<RosterCadet>>((ref) => DemoData.roster());
 
-final documentsProvider = Provider<List<KnowledgeDocument>>((ref) => DemoData.documents());
+final documentsProvider =
+    NotifierProvider<DocumentsController, List<KnowledgeDocument>>(DocumentsController.new);
+
+class DocumentsController extends LiveListController<KnowledgeDocument> {
+  @override
+  List<KnowledgeDocument> demo() => DemoData.documents();
+
+  @override
+  Future<List<KnowledgeDocument>> fetch(UnitRepository repo) => repo.documents();
+}
 
 /// The signed-in cadet's own record, if they are on the roster.
 final myRecordProvider = Provider<RosterCadet?>((ref) {
@@ -156,12 +259,22 @@ final myEligibilityProvider = Provider<EligibilityStatus?>((ref) => ref.watch(my
 // ---------------------------------------------------------------------------
 final diaryProvider = NotifierProvider<DiaryController, List<DiaryEntry>>(DiaryController.new);
 
-class DiaryController extends Notifier<List<DiaryEntry>> {
+class DiaryController extends LiveListController<DiaryEntry> {
   @override
-  List<DiaryEntry> build() => DemoData.diary(ref.read(clockProvider)())
-    ..sort((a, b) => b.date.compareTo(a.date));
+  List<DiaryEntry> demo() => DemoData.diary(ref.read(clockProvider)())..sort((a, b) => b.date.compareTo(a.date));
 
-  void add(DiaryEntry e) => state = [e, ...state]..sort((a, b) => b.date.compareTo(a.date));
+  @override
+  Future<List<DiaryEntry>> fetch(UnitRepository repo) => repo.diary();
+
+  Future<void> add(DiaryEntry e) async {
+    final live = repo;
+    if (live != null) {
+      await live.addDiaryEntry(e);
+      await reload(live);
+      return;
+    }
+    state = [e, ...state]..sort((a, b) => b.date.compareTo(a.date));
+  }
 }
 
 final diaryStatsProvider = Provider<DiaryStats>(

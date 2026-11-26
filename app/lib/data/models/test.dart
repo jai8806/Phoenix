@@ -146,3 +146,22 @@ TestResult scoreTest({
     ],
   );
 }
+
+/// A précis question waiting for the ANO to set its answer and approve it.
+class ReviewItem {
+  const ReviewItem({
+    required this.id,
+    required this.prompt,
+    required this.options,
+    required this.source,
+    this.page,
+  });
+
+  final String id;
+  final String prompt;
+  final List<String> options;
+
+  /// Where it comes from, e.g. "Special Subject (Army) JD/JW (2025) · AF I · Q3".
+  final String source;
+  final int? page;
+}

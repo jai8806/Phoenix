@@ -29,8 +29,10 @@ See [docs/PLAN.md](docs/PLAN.md) for the roadmap and
 | Supabase schema with row-level security | Done, checked on Postgres 16 |
 | Précis ingestion pipeline (index, cited passages, draft MCQs) | Army JD/JW, Army SD/SW and Common SD/SW done: 1,575 passages, 232 MCQs; see [docs/CONTENT.md](docs/CONTENT.md) |
 | Official subject lists in Learn (Army JD/JW, Army SD/SW, Common SD/SW) | Done (generated from the précis) |
-| Keyword search for Ustaad (`search_chunks`) | Done in the schema |
-| Ustaad answers with Claude | Phase 1 (needs an Anthropic key in Supabase) |
+| Ustaad: cited answers from the précis | Done: Supabase Edge Function, free Gemini by default (Claude optional) |
+| Live data: announcements, calendar, training diary | Done (Supabase) |
+| ANO review of précis MCQs → practice bank | Done |
+| Live roster, attendance, hosted tests | Next |
 
 ## Run it
 

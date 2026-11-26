@@ -17,6 +17,7 @@ import '../../features/cadet/ustaad_screen.dart';
 import '../../features/command/command_shell.dart';
 import '../../features/command/knowledge_screen.dart';
 import '../../features/command/overview_screen.dart';
+import '../../features/command/review_screen.dart';
 import '../../features/command/roster_screen.dart';
 import '../../features/command/tests_screen.dart';
 import '../../features/shared/announcements_screen.dart';
@@ -41,6 +42,7 @@ abstract final class Routes {
   static const commandCalendar = '/command/calendar';
   static const commandAnnouncements = '/command/announcements';
   static const knowledge = '/command/knowledge';
+  static const review = '/command-review';
 
   static String home(AppUser user) => user.role.canAdminister ? overview : today;
 }
@@ -59,7 +61,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       if (user == null) return loc == Routes.signIn ? null : Routes.signIn;
       if (!user.hasUnit) return loc == Routes.joinUnit ? null : Routes.joinUnit;
       if (loc == Routes.signIn || loc == Routes.joinUnit) return Routes.home(user);
-      if (loc.startsWith('/command') && !user.role.canAdminister) return Routes.today;
+      if (loc.startsWith('/command') && !user.role.canAdminister) return Routes.today;  // includes /command-review
       return null;
     },
     routes: [
@@ -93,6 +95,7 @@ final routerProvider = Provider<GoRouter>((ref) {
         ],
       ),
       GoRoute(path: Routes.newDiaryEntry, builder: (_, _) => const DiaryEntryScreen()),
+      GoRoute(path: Routes.review, builder: (_, _) => const ReviewScreen()),
       GoRoute(path: Routes.calendar, builder: (_, _) => const CalendarScreen(editable: false)),
       GoRoute(path: Routes.announcements, builder: (_, _) => const AnnouncementsScreen(editable: false)),
       GoRoute(

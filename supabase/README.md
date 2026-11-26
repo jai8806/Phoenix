@@ -19,6 +19,26 @@ ever has to leave the dashboard.
    email. Then run the `update profiles … role = 'ano'` statement at the bottom
    of `seed/create_unit.sql` with their email address.
 5. **Cadets** create accounts in the app and enter the join code.
+6. **Question review and Ustaad tables:** run
+   `migrations/20261126010000_review_and_ustaad.sql`.
+
+## Turn on Ustaad (free, with Gemini)
+
+1. Get a free API key at **aistudio.google.com** → *Get API key* (no card
+   needed). Free-tier prompts may be used by Google to improve its products;
+   a paid key turns that off.
+2. In Supabase: **Edge Functions → Secrets** → add `GEMINI_API_KEY` with that
+   key. Optional: `LLM_MODEL` (default `gemini-3.5-flash-lite`) and
+   `USTAAD_DAILY_LIMIT` (default 50 questions per cadet per day).
+3. **Edge Functions → Deploy a new function → Via editor**, name it
+   `ustaad`, and create two files with the contents of
+   `functions/ustaad/index.ts` and `functions/ustaad/core.ts`. Deploy.
+   (With the Supabase CLI instead: `supabase functions deploy ustaad`.)
+4. Keep **Verify JWT** on: only signed-in members can ask, and Ustaad reads
+   the précis with the cadet's own permissions.
+
+To use Claude instead, set `LLM_PROVIDER=anthropic` and `ANTHROPIC_API_KEY`.
+Tests for the function: `deno test supabase/functions/ustaad/core_test.ts`.
 
 Run the app against the project:
 
@@ -43,6 +63,7 @@ createdb phoenix_check
 psql -d phoenix_check -v ON_ERROR_STOP=1 -f tests/00_auth_stub.sql -f migrations/20261126000000_init.sql
 psql -d phoenix_check -f ../content/build/army_jd_jw_2025.sql   # optional: précis content
 psql -d phoenix_check -f tests/rls_check.sql
+psql -d phoenix_check -f migrations/20261126010000_review_and_ustaad.sql -f tests/review_check.sql
 ```
 
 Some steps are meant to fail (for example a cadet trying to post an

@@ -1,8 +1,10 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../../core/router/app_router.dart';
 import '../../core/theme/tokens.dart';
 import '../../data/models/test.dart';
 import '../../data/providers.dart';
@@ -16,23 +18,39 @@ class TestsScreen extends ConsumerWidget {
     final tests = ref.watch(testsProvider);
     final bank = ref.watch(questionBankProvider);
     final now = ref.watch(clockProvider)();
+    final live = ref.watch(isLiveProvider);
 
     return PageBody(children: [
+      Card(
+        child: ListTile(
+          leading: const Icon(Icons.fact_check_outlined),
+          title: const Text('Review précis questions'),
+          subtitle: const Text('Set the correct answer for questions from the précis. Approved ones join your practice bank.'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => context.push(Routes.review),
+        ),
+      ),
+      const SizedBox(height: Space.lg),
       Row(children: [
         Expanded(
-          child: Text('${bank.length} questions in the bank',
+          child: Text('${bank.length} approved question${bank.length == 1 ? '' : 's'} in the practice bank',
               style: Theme.of(context).textTheme.bodyMedium),
         ),
-        FilledButton.icon(
-          onPressed: () => showDialog<void>(context: context, builder: (_) => const _NewTestDialog()),
-          icon: const Icon(Icons.add),
-          label: const Text('New test'),
-        ),
+        if (!live)
+          FilledButton.icon(
+            onPressed: () => showDialog<void>(context: context, builder: (_) => const _NewTestDialog()),
+            icon: const Icon(Icons.add),
+            label: const Text('New test'),
+          ),
       ]),
       const SizedBox(height: Space.lg),
       if (tests.isEmpty)
-        const EmptyState(icon: Icons.quiz_outlined, title: 'No tests yet',
-            message: 'Create a test and it appears in every cadet\'s Learn tab.')
+        EmptyState(
+            icon: Icons.quiz_outlined,
+            title: live ? 'Hosted tests are coming next' : 'No tests yet',
+            message: live
+                ? 'Cadets can already practise with approved questions from the Learn tab.'
+                : 'Create a test and it appears in every cadet\'s Learn tab.')
       else
         ListCard(children: [
           for (final test in tests)
@@ -50,12 +68,12 @@ class TestsScreen extends ConsumerWidget {
               ].join(' · ')),
             ),
         ]),
-      const SectionHeader('Coming in Phase 1–2'),
+      const SectionHeader('Coming next'),
       const ListCard(children: [
         ListTile(
           leading: Icon(Icons.auto_awesome),
-          title: Text('AI question drafts from your precis'),
-          subtitle: Text('Ustaad drafts questions from uploaded material; you approve each one before it enters the bank.'),
+          title: Text('AI question drafts for the SD/SW précis'),
+          subtitle: Text('The senior précis has no MCQs; Ustaad will draft them and you approve each one.'),
         ),
         ListTile(
           leading: Icon(Icons.insights_outlined),

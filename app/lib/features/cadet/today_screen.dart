@@ -33,6 +33,7 @@ class TodayScreen extends ConsumerWidget {
           if (user?.unitName != null)
             Text(user!.unitName!, style: t.bodyMedium?.copyWith(color: c.onSurfaceVariant)),
           const SizedBox(height: Space.xl),
+          const _SyncBanner(),
           const _ExamCountdownCard(),
           const SizedBox(height: Space.md),
           const _EligibilityCard(),
@@ -190,6 +191,37 @@ class _FallInCard extends StatelessWidget {
             ),
             const Icon(Icons.chevron_right),
           ]),
+        ),
+      ),
+    );
+  }
+}
+
+
+class _SyncBanner extends ConsumerWidget {
+  const _SyncBanner();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final issue = ref.watch(syncIssueProvider);
+    if (issue == null) return const SizedBox.shrink();
+    final c = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: Space.md),
+      child: Card(
+        color: c.errorContainer,
+        child: ListTile(
+          leading: Icon(Icons.cloud_off_outlined, color: c.onErrorContainer),
+          title: Text(issue, style: TextStyle(color: c.onErrorContainer)),
+          trailing: TextButton(
+            onPressed: () {
+              ref.read(syncIssueProvider.notifier).clear();
+              for (final p in [announcementsProvider, eventsProvider, diaryProvider, questionBankProvider]) {
+                ref.invalidate(p);
+              }
+            },
+            child: const Text('Retry'),
+          ),
         ),
       ),
     );

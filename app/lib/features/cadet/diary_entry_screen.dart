@@ -5,6 +5,7 @@ import 'package:material_ui/material_ui.dart';
 import '../../core/theme/tokens.dart';
 import '../../data/models/diary.dart';
 import '../../data/providers.dart';
+import '../../data/unit_repository.dart';
 import '../shared/widgets.dart';
 
 /// Log a training session. Built to take under a minute: pick a type,
@@ -43,7 +44,9 @@ class _DiaryEntryScreenState extends ConsumerState<DiaryEntryScreen> {
 
   String? _text(TextEditingController c) => c.text.trim().isEmpty ? null : c.text.trim();
 
-  void _save() {
+  bool _busy = false;
+
+  Future<void> _save() async {
     final entry = DiaryEntry(
       id: 'd${DateTime.now().microsecondsSinceEpoch}',
       type: _type,
@@ -67,9 +70,18 @@ class _DiaryEntryScreenState extends ConsumerState<DiaryEntryScreen> {
             )
           : null,
     );
-    ref.read(diaryProvider.notifier).add(entry);
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Session logged')));
-    context.pop();
+    setState(() => _busy = true);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await ref.read(diaryProvider.notifier).add(entry);
+      messenger.showSnackBar(const SnackBar(content: Text('Session logged')));
+      if (mounted) context.pop();
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(
+          content: Text(e is UnitDataFailure ? e.message : "Couldn't save the session. Try again.")));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   @override
@@ -156,7 +168,7 @@ class _DiaryEntryScreenState extends ConsumerState<DiaryEntryScreen> {
           ),
         ),
         const SizedBox(height: Space.xl),
-        FilledButton(onPressed: _save, child: const Text('Save session')),
+        FilledButton(onPressed: _busy ? null : _save, child: const Text('Save session')),
       ]),
     );
   }

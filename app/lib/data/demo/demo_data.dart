@@ -18,6 +18,7 @@ abstract final class DemoData {
     division: Division.sd,
     trainingYear: 2,
     unitName: unitName,
+    isSample: true,
   );
 
   static const seniorCadet = AppUser(
@@ -30,6 +31,7 @@ abstract final class DemoData {
     division: Division.sw,
     trainingYear: 3,
     unitName: unitName,
+    isSample: true,
   );
 
   static const ano = AppUser(
@@ -38,6 +40,7 @@ abstract final class DemoData {
     role: AppRole.ano,
     rank: 'Lt',
     unitName: unitName,
+    isSample: true,
   );
 
   static AppUser forRole(AppRole role) => switch (role) {

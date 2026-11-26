@@ -5,6 +5,7 @@ import 'package:material_ui/material_ui.dart';
 import '../../core/theme/tokens.dart';
 import '../../data/models/comms.dart';
 import '../../data/providers.dart';
+import '../../data/unit_repository.dart';
 import 'widgets.dart';
 
 /// Unit calendar. Cadets read it; admins can add events.
@@ -67,19 +68,32 @@ class _NewEventDialogState extends ConsumerState<_NewEventDialog> {
     super.dispose();
   }
 
-  void _save() {
+  bool _busy = false;
+  String? _saveError;
+
+  Future<void> _save() async {
     if (_title.text.trim().isEmpty) {
       setState(() => _titleError = 'Add a title, e.g. "Parade" or "ATC briefing"');
       return;
     }
-    ref.read(eventsProvider.notifier).add(CalendarEvent(
-          id: 'e${DateTime.now().microsecondsSinceEpoch}',
-          title: _title.text.trim(),
-          kind: _kind,
-          startsAt: DateTime(_date.year, _date.month, _date.day, _time.hour, _time.minute),
-          location: _location.text.trim().isEmpty ? null : _location.text.trim(),
-        ));
-    Navigator.of(context).pop();
+    setState(() {
+      _busy = true;
+      _saveError = null;
+    });
+    try {
+      await ref.read(eventsProvider.notifier).add(CalendarEvent(
+            id: 'e${DateTime.now().microsecondsSinceEpoch}',
+            title: _title.text.trim(),
+            kind: _kind,
+            startsAt: DateTime(_date.year, _date.month, _date.day, _time.hour, _time.minute),
+            location: _location.text.trim().isEmpty ? null : _location.text.trim(),
+          ));
+      if (mounted) Navigator.of(context).pop();
+    } catch (e) {
+      if (mounted) setState(() => _saveError = e is UnitDataFailure ? e.message : 'Couldn\'t add the event. Try again.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   @override
@@ -134,11 +148,15 @@ class _NewEventDialogState extends ConsumerState<_NewEventDialog> {
           ]),
           const SizedBox(height: Space.md),
           TextField(controller: _location, decoration: const InputDecoration(labelText: 'Location (optional)')),
+          if (_saveError != null) ...[
+            const SizedBox(height: Space.md),
+            Text(_saveError!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+          ],
         ]),
       ),
       actions: [
         TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
-        FilledButton(onPressed: _save, child: const Text('Add event')),
+        FilledButton(onPressed: _busy ? null : _save, child: const Text('Add event')),
       ],
     );
   }

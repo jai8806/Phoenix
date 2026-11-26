@@ -95,7 +95,7 @@ class _QuizScreenState extends ConsumerState<QuizScreen> {
       return Scaffold(
         appBar: AppBar(title: Text(_title)),
         body: const EmptyState(icon: Icons.quiz_outlined, title: 'No questions yet',
-            message: 'This test has no questions in the bank yet.'),
+            message: 'Your ANO approves précis questions in the Command Center; they will appear here for practice.'),
       );
     }
     if (_result != null) return _ResultView(title: _title, result: _result!, questions: _questions, answers: _answers);

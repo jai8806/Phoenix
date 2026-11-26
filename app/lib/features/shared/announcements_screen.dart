@@ -3,6 +3,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../../core/theme/tokens.dart';
 import '../../data/providers.dart';
+import '../../data/unit_repository.dart';
 import 'widgets.dart';
 
 /// Unit announcements. Cadets read them; admins can post.
@@ -59,19 +60,31 @@ class _ComposeDialogState extends ConsumerState<_ComposeDialog> {
     super.dispose();
   }
 
-  void _post() {
+  bool _busy = false;
+
+  Future<void> _post() async {
     if (_title.text.trim().isEmpty || _body.text.trim().isEmpty) {
       setState(() => _error = 'Add both a title and a message');
       return;
     }
     final me = ref.read(authControllerProvider);
-    ref.read(announcementsProvider.notifier).post(
-          title: _title.text.trim(),
-          body: _body.text.trim(),
-          author: me?.displayName ?? 'Unit',
-          pinned: _pinned,
-        );
-    Navigator.of(context).pop();
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await ref.read(announcementsProvider.notifier).post(
+            title: _title.text.trim(),
+            body: _body.text.trim(),
+            author: me?.displayName ?? 'Unit',
+            pinned: _pinned,
+          );
+      if (mounted) Navigator.of(context).pop();
+    } catch (e) {
+      if (mounted) setState(() => _error = e is UnitDataFailure ? e.message : 'Couldn\'t post. Try again.');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   @override
@@ -101,7 +114,7 @@ class _ComposeDialogState extends ConsumerState<_ComposeDialog> {
       ),
       actions: [
         TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
-        FilledButton(onPressed: _post, child: const Text('Post announcement')),
+        FilledButton(onPressed: _busy ? null : _post, child: const Text('Post announcement')),
       ],
     );
   }

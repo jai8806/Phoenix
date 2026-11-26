@@ -45,6 +45,8 @@ class _RosterScreenState extends ConsumerState<RosterScreen> {
           child: OutlinedButton.icon(onPressed: null, icon: const Icon(Icons.upload_file), label: const Text('Import CSV')),
         ),
       ]),
+      const SizedBox(height: Space.sm),
+      const Align(alignment: Alignment.centerLeft, child: DemoBadge(text: 'Sample roster · live roster and attendance come next')),
       const SizedBox(height: Space.lg),
       if (shown.isEmpty)
         EmptyState(

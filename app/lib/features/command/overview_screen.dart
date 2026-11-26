@@ -29,7 +29,7 @@ class OverviewScreen extends ConsumerWidget {
     return PageBody(children: [
       Row(children: [
         Expanded(child: Text('Welcome, ${user?.displayName ?? ''}', style: t.headlineSmall)),
-        const DemoBadge(),
+        const DemoBadge(text: 'Sample roster'),
       ]),
       if (user?.unitName != null) Text(user!.unitName!, style: t.bodyMedium?.copyWith(color: c.onSurfaceVariant)),
       const SizedBox(height: Space.xl),

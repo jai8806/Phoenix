@@ -63,7 +63,7 @@ class _LearnScreenState extends ConsumerState<LearnScreen> {
         const SectionHeader('Tests from your unit'),
         if (tests.isEmpty)
           const EmptyState(icon: Icons.quiz_outlined, title: 'No tests yet',
-              message: 'Tests your ANO or senior cadets host will appear here.')
+              message: 'Tests your ANO or senior cadets host will appear here. Meanwhile, use Quick practice.')
         else
           ListCard(children: [
             for (final test in tests)

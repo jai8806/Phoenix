@@ -46,6 +46,8 @@ class AppUser {
     this.division,
     this.trainingYear,
     this.unitName,
+    this.unitId,
+    this.isSample = false,
   });
 
   final String id;
@@ -57,6 +59,10 @@ class AppUser {
   final Division? division;
   final int? trainingYear;
   final String? unitName;
+  final String? unitId;
+
+  /// Sample users (demo mode, or "Explore with sample data") never touch the backend.
+  final bool isSample;
 
   String get firstName => fullName.split(' ').first;
 
