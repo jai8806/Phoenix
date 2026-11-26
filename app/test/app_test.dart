@@ -190,7 +190,8 @@ void main() {
         scrollable: find.descendant(of: find.byType(LearnScreen), matching: find.byType(Scrollable)).first);
 
     await scrollTo(find.text('Junior (JD/JW)'));
-    expect(find.textContaining('Provisional list'), findsWidgets);
+    // A senior-division cadet starts on the official SD/SW list.
+    expect(find.text('Special Subject (Army) SD/SW · DGNCC Précis'), findsOneWidget);
     await tester.tap(find.text('Junior (JD/JW)'));
     await tester.pumpAndSettle();
     await scrollTo(find.text('Map Reading'));

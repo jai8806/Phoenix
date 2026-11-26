@@ -34,12 +34,12 @@ def main() -> None:
         "import 'syllabus.dart';",
         "",
         f"const {args.name} = Syllabus(",
-        f"  source: {dart_str(doc['title'] + ' · DGNCC Précis ' + doc['edition'])},",
+        f"  source: {dart_str(doc['title'] + ' · DGNCC Précis' + (' ' + doc['edition'] if doc['edition'] else ''))},",
         "  official: true,",
         "  groups: [",
     ]
     for code, name in groups.items():
-        subjects = [s for s in data["subjects"] if s["code"].split("-")[0] == code]
+        subjects = [s for s in data["subjects"] if s["code"].rsplit("-", 1)[0] == code]
         lines.append(f"    SubjectGroup(code: {dart_str(code)}, name: {dart_str(name)}, subjects: [")
         for s in subjects:
             lines.append(

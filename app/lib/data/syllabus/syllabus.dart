@@ -1,5 +1,7 @@
 import '../models/user.dart';
 import 'army_junior.dart';
+import 'army_senior.dart';
+import 'common_senior.dart';
 
 class SyllabusSubject {
   const SyllabusSubject({
@@ -43,6 +45,9 @@ class Syllabus {
 
   int get subjectCount => groups.fold(0, (sum, g) => sum + g.subjects.length);
   int get totalPeriods => groups.fold(0, (sum, g) => sum + g.totalPeriods);
+
+  /// Period counts are printed only in some précis editions.
+  bool get hasPeriods => totalPeriods > 0;
 }
 
 enum SyllabusLevel {
@@ -58,7 +63,7 @@ enum SyllabusLevel {
 /// Wing-specific (special subject) syllabus. Official lists are generated from
 /// the précis master index; the rest are placeholders until their précis is ingested.
 Syllabus specialSyllabus(Wing wing, SyllabusLevel level) {
-  if (wing == Wing.army && level == SyllabusLevel.junior) return armyJunior;
+  if (wing == Wing.army) return level == SyllabusLevel.junior ? armyJunior : armySenior;
   return Syllabus(
     source: 'Provisional list · official précis not yet added',
     official: false,
@@ -72,8 +77,12 @@ Syllabus specialSyllabus(Wing wing, SyllabusLevel level) {
   );
 }
 
-/// Common subjects shared by all wings. Placeholder until the common-subject précis is ingested.
-const commonSyllabus = Syllabus(
+/// Common subjects shared by all wings. The SD/SW list is official; the JD/JW
+/// common-subject précis has not been ingested yet.
+Syllabus commonSyllabus(SyllabusLevel level) =>
+    level == SyllabusLevel.senior ? commonSenior : _provisionalCommon;
+
+const _provisionalCommon = Syllabus(
   source: 'Provisional list · official précis not yet added',
   official: false,
   groups: [

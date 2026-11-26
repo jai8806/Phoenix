@@ -19,18 +19,25 @@ public, so:
 
 ## What has been ingested
 
-| Document | Coverage | Result |
-| --- | --- | --- |
-| Special Subject (Army) JD/JW, 2025 edition, Parts 1 and 2 | The whole book: master index (25 subjects) and all 25 chapters (AF, FCBC, MC, MR, MWE; book pp. 1–280) | 297 passages, 232 draft MCQs |
+| Book | Layout | Coverage | Result |
+| --- | --- | --- | --- |
+| Special Subject (Army) JD/JW, 2025, Parts 1 and 2 | `jdjw` | Master index (25 subjects) and all 25 chapters | 297 passages, 232 draft MCQs |
+| Special Subject (Army) SD/SW | `sdsw` | 6 units, 40 chapters | 319 passages |
+| Common Subject SD/SW | `sdsw` | 11 units, 103 chapters | 959 passages |
 
-Not imported: fill-in-the-blank questions (they have no options), short- and
-long-answer questions, and figures (maps, signs, diagrams) — text only.
+**1,575 passages and 232 draft MCQs in all.** The SD/SW books are an older
+edition (statistics up to about 2017) with no MCQs, only written
+comprehension questions, and no period counts. The JD/JW book is the 2025
+edition.
+
+Not imported: fill-in-the-blank, short- and long-answer questions, and figures
+(maps, signs, diagrams); only text is extracted.
 
 Still needed:
 
-- Army **SD/SW** précis. JD/JW is the Junior Division, i.e. the A
-  Certificate; B and C Certificate cadets follow the Senior Division précis.
-- The **common subjects** précis, plus Navy, Air Force and RVC special subjects.
+- The **JD/JW common subjects** précis.
+- **Navy, Air Force and RVC** special subjects (JD/JW and SD/SW).
+- The current (2025) **SD/SW** editions, if the ones ingested are older.
 
 ## Pipeline
 
@@ -48,6 +55,12 @@ python3 tools/ingest/ingest.py content/sources/army_jd_jw_2025_part2.pdf \
 # 2. Try retrieval locally (keyword search, no AI call)
 python3 tools/ingest/ask.py "Who is the Supreme Commander of the Armed Forces?"
 
+#    SD/SW books use the unit layout (no master index, no MCQs):
+python3 tools/ingest/ingest.py content/sources/army_sd_sw_2025.pdf --layout sdsw \
+    --wing army --level senior --title "Special Subject (Army) SD/SW"
+python3 tools/ingest/ingest.py content/sources/common_sd_sw_2025.pdf --layout sdsw \
+    --wing common --level senior --title "Common Subject SD/SW"
+
 # 3. One SQL load script per book (all volumes together), for the Supabase SQL Editor
 python3 tools/ingest/to_sql.py content/build/army_jd_jw_2025_part1 content/build/army_jd_jw_2025_part2 \
     --out content/build/army_jd_jw_2025.sql
@@ -62,7 +75,14 @@ python3 -m pytest tools/ingest/tests
 
 ### How a précis is parsed
 
-The précis use one fixed layout, which `tools/ingest/precis.py` relies on:
+Two layouts are supported. **SD/SW (`--layout sdsw`):** each unit opens
+with "UNIT 2 : MAP READING" and a lesson index (codes like MR-3); chapters
+open with "CHAPTER - III" (chapters are numbered by order in the unit, as the
+book sometimes misprints the numeral); short Title Case lines are section
+headings; unit-end comprehension questions are skipped. Pages without a
+printed number take one counted on from the last numbered page.
+
+**JD/JW 2025 (`--layout jdjw`, the default)** uses this layout:
 
 1. **Master index:** each row gives a code (`MR-IV`), a title, periods, a type
    (`T2` + `P1` = 2 theory and 1 practical) and the start page. The type

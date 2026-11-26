@@ -51,6 +51,8 @@ class Passage:
     @property
     def citation(self) -> str:
         pages = sorted(set(self.book_pages))
+        if not pages:
+            return f"{self.chapter_code} · {self.section}"
         span = str(pages[0]) if len(pages) == 1 else f"{pages[0]}–{pages[-1]}"
         return f"{self.chapter_code} · {self.section} · p. {span}"
 
@@ -89,11 +91,22 @@ def to_page(pdf_page: int, text: str) -> Page:
 
 
 def fill_book_pages(pages: list[Page]) -> list[Page]:
-    """Chapter opening pages print no number; infer it from the next numbered page."""
+    """Infer printed page numbers for pages that don't show one.
+
+    A chapter opening page usually prints no number, so it takes the next
+    page's number minus one. Any page still unnumbered (some volumes stop
+    printing numbers) counts on from the last numbered page before it.
+    """
     out = list(pages)
     for i in range(len(out) - 1, -1, -1):
         if out[i].book_page is None and i + 1 < len(out) and out[i + 1].book_page is not None:
             out[i] = Page(out[i].pdf_page, out[i + 1].book_page - 1, out[i].text)
+    last: Page | None = None
+    for i, page in enumerate(out):
+        if page.book_page is None and last is not None:
+            out[i] = Page(page.pdf_page, last.book_page + (page.pdf_page - last.pdf_page), page.text)
+        elif page.book_page is not None:
+            last = page
     return out
 
 
@@ -105,11 +118,12 @@ _INDEX_ROW = re.compile(
     rf"^\s*\d+\.\s+(?P<code>[A-Z]+-{ROMAN})\s+(?P<rest>.+?)\s*$"
 )
 _KIND = re.compile(r"^[TP]\d*$")
-ACRONYMS = {"CAPF", "FC", "BC", "GPS", "NCC", "IAF", "MR", "RT"}
-_SMALL = {"of", "and", "to", "the", "its", "in", "a", "an", "for", "on", "&"}
+ACRONYMS = {"CAPF", "FC", "BC", "GPS", "NCC", "IAF", "MR", "RT", "NDMA", "NDRF", "SDRF", "INSAS", "ATC", "CATC", "RDC", "TSC", "IDSSC", "NSC", "VSC", "SSB", "LMG", "PVC", "UN", "AIDS", "HIV", "CPR", "SLR", "OTA", "DG", "ANO", "PI", "CSUO", "CSM", "IT", "YEP", "WI-FI", "SD", "SW", "JD", "JW", "NGO", "NSS"}
+_SMALL = {"of", "and", "to", "the", "its", "in", "a", "an", "for", "on", "&", "with", "from", "by", "at", "or"}
 
 
 def smart_title(text: str) -> str:
+    text = re.sub(r"\s*/\s*", " / ", text)  # "CRAFT /BATTLE" -> "CRAFT / BATTLE"
     out: list[str] = []
     for i, word in enumerate(text.split()):
         core = word.strip("():,–-").upper()
@@ -411,3 +425,128 @@ def parse_mcqs(chapter: Chapter) -> list[DraftQuestion]:
             current["prompt"] += " " + line  # wrapped prompt
     finish()
     return questions
+
+
+# ---------------------------------------------------------------------------
+# SD/SW layout (older edition format)
+# ---------------------------------------------------------------------------
+# * Each unit opens with "UNIT 2 : MAP READING" and an INDEX of lessons coded
+#   like "MR-3", followed by a learning-outcomes table.
+# * Chapters open with "CHAPTER - III" (numerals are sometimes misprinted, so
+#   chapters are numbered by order within the unit) and an upper-case title
+#   that may wrap.
+# * Section headings are short Title Case lines ("Command Headquarters").
+# * Units end with "Comprehension Questions" (written answers, no MCQs).
+
+_UNIT = re.compile(r"^UNIT\s*[-–]?\s*(?P<n>\d+)\s*:\s*(?P<name>.+)$")
+_SDSW_CHAPTER = re.compile(r"^CHAPTER\s*[-–]?\s*[IVXL]+\b\s*$")
+_LESSON_CODE = re.compile(r"^\d+\.\s+(?P<prefix>[A-Z]+(?:/[A-Z]+)?)\s*[- ]?\s*\d+[A-Z]?\b")
+_QUESTIONS = re.compile(r"^(?:Comprehension Questions|Q\s*1\s*[.)])", re.I)
+_SMALL_WORDS = {"of", "and", "the", "to", "in", "for", "on", "a", "an", "&", "its", "at", "by", "with", "from"}
+
+
+@dataclass
+class Unit:
+    number: int
+    name: str
+    prefix: str  # lesson-code prefix, e.g. "MR"
+
+
+def _is_heading(line: str) -> bool:
+    """A short Title Case line with no sentence punctuation, e.g. "Constituents of the Navy"."""
+    words = line.split()
+    if not 1 <= len(words) <= 7 or len(line) > 60 or line[-1] in ".,;:-–" or re.search(r"\d", line):
+        return False
+    if line.isupper():
+        return False  # upper-case lines are chapter titles or table headers
+    return all(w[0].isupper() or w.lower() in _SMALL_WORDS or not w[0].isalpha() for w in words) \
+        and words[0][0].isupper()
+
+
+def split_sdsw(pages: list[Page]) -> tuple[list[Unit], list[Chapter]]:
+    """Units and chapters for the SD/SW layout. Chapter codes use the unit's
+    lesson prefix and the chapter's order in the unit (e.g. "MR-3")."""
+    units: list[Unit] = []
+    chapters: list[Chapter] = []
+    ordinal = 0
+    in_questions = False
+    for page in pages:
+        lines = [l.strip() for l in page.text.splitlines() if l.strip()]
+        head = lines[:3]
+        unit_line = next((l for l in head if _UNIT.match(l)), None)
+        if unit_line and any("INDEX" in l for l in lines[:4]):
+            m = _UNIT.match(unit_line)
+            prefix = next((pm.group("prefix") for l in lines if (pm := _LESSON_CODE.match(l))), f"U{m.group('n')}")
+            units.append(Unit(int(m.group("n")), smart_title(m.group("name")), prefix))
+            ordinal = 0
+            in_questions = False
+            continue
+        if not units:
+            continue
+        kept: list[str] = []
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            if _SDSW_CHAPTER.match(line):
+                title_parts = []
+                i += 1
+                while i < len(lines) and lines[i].isupper() and len(title_parts) < 3:
+                    title_parts.append(lines[i])
+                    i += 1
+                ordinal += 1
+                if kept and chapters:
+                    chapters[-1].pages.append(Page(page.pdf_page, page.book_page, "\n".join(kept)))
+                kept = []
+                code = f"{units[-1].prefix}-{ordinal}"
+                chapters.append(Chapter(code, smart_title(" ".join(title_parts)) or code))
+                in_questions = False
+                continue
+            if _QUESTIONS.match(line):
+                in_questions = True  # comprehension questions run to the next chapter or unit
+            if not in_questions and not _UNIT.match(line):
+                kept.append(line)
+            i += 1
+        if chapters and kept:
+            chapters[-1].pages.append(Page(page.pdf_page, page.book_page, "\n".join(kept)))
+    return units, chapters
+
+
+def build_passages_sdsw(chapter: Chapter, max_chars: int = 1400) -> list[Passage]:
+    passages: list[Passage] = []
+    section = "Introduction"
+    buf: list[str] = []
+    pages: list[int] = []
+
+    def size() -> int:
+        return sum(len(b) for b in buf)
+
+    def flush() -> None:
+        text = " ".join(" ".join(buf).split())
+        if text and len(text) < 200 and passages and passages[-1].section == section:
+            last = passages[-1]
+            last.text = f"{last.text} {text}"
+            last.book_pages = sorted(set(last.book_pages) | set(pages))
+        elif text:
+            passages.append(Passage(chapter.code, chapter.title, section, sorted(set(pages)), text))
+        buf.clear()
+        pages.clear()
+
+    for page in chapter.pages:
+        for line in page.text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            if _is_heading(line) and (not buf or buf[-1].endswith((".", ":", "?", "!")) or size() == 0):
+                flush()
+                section = smart_title(line)
+                continue
+            # Break at sentence ends once the passage is long enough.
+            if size() >= max_chars * 0.8 and buf and buf[-1].endswith("."):
+                flush()
+            buf.append(line)
+            if page.book_page is not None:
+                pages.append(page.book_page)
+            if size() >= max_chars * 1.3:
+                flush()
+    flush()
+    return passages

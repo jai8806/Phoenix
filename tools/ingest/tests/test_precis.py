@@ -203,3 +203,36 @@ def test_two_column_options_and_misprinted_letter():
     # Four ordinary options, one mentioning others, are left alone.
     opts = ["Yes", "No", "Both (a) and (b)", "Neither"]
     assert _fix_layouts(opts) == opts
+
+
+def test_unnumbered_pages_count_on_from_the_last_number():
+    pages = fill_book_pages([to_page(1, "10\nA"), to_page(2, "B"), to_page(3, "C"), to_page(4, "13\nD")])
+    assert [p.book_page for p in pages] == [10, 11, 12, 13]
+    assert smart_title("FIELD CRAFT /BATTLE CRAFT") == "Field Craft / Battle Craft"
+
+
+SDSW = [
+    "1\nUNIT 2 : DEMO WORK\nINDEX\nSer No Lesson Code Subject Page Number\n1. DW-1 Getting started 03 05\n"
+    "2. DW-2 Going further 06 09",
+    "2\nUNIT 2 : DEMO WORK\nKnowledge Understanding Application\nOutcome table to skip.",
+    "3\nCHAPTER - I\nGETTING STARTED WITH\nDEMO WORK\nIntroduction\nDemo work begins with planning.\n"
+    "Command Posts\nEach post has a commander and a signaller.",
+    "4\nCHAPTER - I\nGOING FURTHER\nIntroduction\nAdvanced demo work needs practice.\n"
+    "Comprehension Questions\nQ1. Answer the following:\n(a) What is demo work?",
+]
+
+
+def test_sdsw_units_chapters_sections_and_questions_skipped():
+    from precis import build_passages_sdsw, split_sdsw
+    pages = fill_book_pages([to_page(i + 1, t) for i, t in enumerate(SDSW)])
+    units, chapters = split_sdsw(pages)
+    assert [(u.prefix, u.name) for u in units] == [("DW", "Demo Work")]
+    # Numbered by order: the book's misprinted second "CHAPTER - I" becomes DW-2.
+    assert [(c.code, c.title) for c in chapters] == [("DW-1", "Getting Started with Demo Work"),
+                                                       ("DW-2", "Going Further")]
+    first = build_passages_sdsw(chapters[0])
+    assert [p.section for p in first] == ["Introduction", "Command Posts"]
+    assert first[1].citation == "DW-1 · Command Posts · p. 3"
+    second = " ".join(p.text for p in build_passages_sdsw(chapters[1]))
+    assert "Advanced demo work" in second and "What is demo work" not in second
+    assert all("Outcome table" not in p.text for c in chapters for p in build_passages_sdsw(c))

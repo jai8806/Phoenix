@@ -78,7 +78,7 @@ class _LearnScreenState extends ConsumerState<LearnScreen> {
         const SizedBox(height: Space.md),
         _SyllabusCard(syllabus: specialSyllabus(wing, level)),
         const SizedBox(height: Space.md),
-        const _SyllabusCard(syllabus: commonSyllabus),
+        _SyllabusCard(syllabus: commonSyllabus(level)),
       ]),
     );
   }
@@ -131,7 +131,7 @@ class _SyllabusCard extends StatelessWidget {
             if (!syllabus.official) const DemoBadge(text: 'Provisional'),
           ]),
         ),
-        for (final g in syllabus.groups) _GroupTile(group: g, showPeriods: syllabus.official),
+        for (final g in syllabus.groups) _GroupTile(group: g, showPeriods: syllabus.hasPeriods),
       ]),
     );
   }

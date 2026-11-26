@@ -15,10 +15,22 @@ void main() {
     expect(s.groups.firstWhere((g) => g.code == 'MR').totalPeriods, 27);
   });
 
+  test('Army and common SD/SW lists come from the précis', () {
+    final army = specialSyllabus(Wing.army, SyllabusLevel.senior);
+    expect(army.official, isTrue);
+    expect(army.subjectCount, 40);
+    expect(army.groups.map((g) => g.code), ['AF', 'MR', 'FC/BC', 'INF', 'MH', 'C']);
+    expect(army.hasPeriods, isFalse); // this edition prints no period counts
+    final common = commonSyllabus(SyllabusLevel.senior);
+    expect(common.official, isTrue);
+    expect(common.subjectCount, 103);
+    expect(common.groups.length, 11);
+  });
+
   test('wings and levels without an ingested précis fall back to a provisional list', () {
-    expect(specialSyllabus(Wing.army, SyllabusLevel.senior).official, isFalse);
     expect(specialSyllabus(Wing.navy, SyllabusLevel.junior).official, isFalse);
-    expect(commonSyllabus.official, isFalse);
+    expect(specialSyllabus(Wing.air, SyllabusLevel.senior).official, isFalse);
+    expect(commonSyllabus(SyllabusLevel.junior).official, isFalse);
   });
 
   test('division maps to syllabus level', () {
