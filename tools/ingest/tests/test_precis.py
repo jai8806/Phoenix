@@ -236,3 +236,20 @@ def test_sdsw_units_chapters_sections_and_questions_skipped():
     second = " ".join(p.text for p in build_passages_sdsw(chapters[1]))
     assert "Advanced demo work" in second and "What is demo work" not in second
     assert all("Outcome table" not in p.text for c in chapters for p in build_passages_sdsw(c))
+
+
+def test_big_books_split_into_ordered_parts_under_the_limit():
+    from to_sql import build_parts
+    index = {"document": {"title": "Demo", "edition": "", "wing": "common", "level": "senior",
+                          "source_file": "demo.pdf"}}
+    passages = [{"chapter_code": "XY-1", "chapter_title": "Intro", "section": "Introduction",
+                 "book_pages": [i], "text": "word " * 400} for i in range(1, 41)]
+    parts = build_parts([(index, passages, [])], max_bytes=20_000)
+    assert len(parts) > 1
+    assert all(len(p.encode()) <= 20_000 for p in parts)
+    assert "delete from documents" in parts[0] and all("delete from" not in p for p in parts[1:])
+    assert all(p.count("begin;") == 1 and p.count("commit;") == 1 for p in parts)
+    assert "Check: counts" in parts[-1]
+    assert sum(p.count("word word") > 0 for p in parts) >= len(parts) - 1
+    total_rows = sum(p.count("::smallint, null::smallint") for p in parts)
+    assert total_rows == 40  # every passage lands in exactly one part

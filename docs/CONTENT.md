@@ -106,7 +106,11 @@ printed number take one counted on from the last numbered page.
 
 ## Loading into Supabase
 
-`to_sql.py` writes one load script per book. It inserts a `documents` row for
+`to_sql.py` writes one load script per book. The Supabase SQL Editor rejects
+queries over a size limit ("Query is too large"), so a big book is split into
+parts of at most 240 KB (`--max-kb`), named `<book>_part1of5.sql` and so on.
+Each part is its own transaction; run them in order. Part 1 clears the
+earlier load, so re-running a whole book is safe. It inserts a `documents` row for
 the shared official syllabus, its passages into `document_chunks`, and the MCQs
 into `questions` as drafts. Paste it into the SQL Editor; re-running it
 replaces the earlier load. Shared material is readable only by signed-in
