@@ -64,7 +64,7 @@ Deno.serve(async (req) => {
       console.error(e.message);
       return json({ error: "Ustaad isn't set up yet. Ask your ANO to add the AI key." }, 503);
     }
-    if (e instanceof ModelError && e.status === 429) {
+    if (e instanceof ModelError && (e.status === 429 || e.status === 503)) {
       return json({ error: "Ustaad is busy right now. Try again in a minute." }, 429);
     }
     console.error(e);

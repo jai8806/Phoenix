@@ -165,9 +165,7 @@ class SupabaseUnitRepository implements UnitRepository {
       final res = await _client.functions.invoke('ustaad', body: {'question': question});
       return UstaadReply.fromJson(Map<String, dynamic>.from(res.data as Map));
     } on FunctionException catch (e) {
-      final details = e.details;
-      final msg = details is Map && details['error'] is String ? details['error'] as String : null;
-      throw UnitDataFailure(msg ?? "Ustaad couldn't answer just now. Try again in a moment.");
+      throw UnitDataFailure(ustaadErrorMessage(e.status, e.details));
     } catch (_) {
       throw const UnitDataFailure("Couldn't reach Ustaad. Check your connection and try again.");
     }
@@ -293,4 +291,12 @@ ReviewItem reviewItemFromRow(Map<String, dynamic> r) => ReviewItem(
 String _subjectLabel(String? subject, String? explanation) {
   final chapter = explanation?.split(' · Q').first;
   return chapter != null && chapter != explanation ? chapter : (subject ?? 'General');
+}
+
+/// What to tell the cadet when the Ustaad function call fails.
+String ustaadErrorMessage(int status, Object? details) {
+  if (details is Map && details['error'] is String) return details['error'] as String;
+  if (status == 404) return "Ustaad isn't switched on for your unit yet. Ask your ANO to set it up.";
+  if (status == 401) return 'Your session has expired. Sign out and sign in again.';
+  return "Ustaad couldn't answer just now. Try again in a moment.";
 }

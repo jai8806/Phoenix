@@ -272,6 +272,12 @@ void main() {
       expect(r.page, 12);
     });
 
+    test('Ustaad errors explain what to do', () {
+      expect(ustaadErrorMessage(404, {'code': 'NOT_FOUND'}), contains('Ask your ANO to set it up'));
+      expect(ustaadErrorMessage(429, {'error': 'Ustaad is busy right now.'}), 'Ustaad is busy right now.');
+      expect(ustaadErrorMessage(401, null), contains('sign in again'));
+    });
+
     test('Ustaad replies parse from the function response', () {
       final r = UstaadReply.fromJson({
         'answer': 'A [1]', 'covered': true,

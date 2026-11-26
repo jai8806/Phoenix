@@ -1,7 +1,7 @@
 name: phoenix
 description: "Phoenix — the go-to app for NCC cadets and their units."
 publish_to: 'none'
-version: 0.2.1+3
+version: 0.2.2+4
 
 environment:
   sdk: ^3.14.0
