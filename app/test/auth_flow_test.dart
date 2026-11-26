@@ -114,4 +114,14 @@ void main() {
     expect(find.text('Enter your full name as it appears on your NCC records.'), findsOneWidget);
     expect(c.read(authControllerProvider), isNull);
   });
+
+  testWidgets('live mode still lets visitors explore with sample data', (tester) async {
+    final c = await pump(tester, FakeBackend());
+    await tester.tap(find.text('Explore with sample data'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Continue as Cadet'));
+    await tester.pumpAndSettle();
+    expect(loc(c), Routes.today);
+    expect(find.text('Good morning, Aarav'), findsOneWidget);
+  });
 }

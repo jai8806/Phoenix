@@ -33,6 +33,9 @@ class AuthController extends Notifier<AppUser?> {
 
   Future<void> signInAs(AppRole role) async => state = await _repo.signInAs(role);
 
+  /// Look around with sample data, even when a backend is configured.
+  void exploreDemo(AppRole role) => state = DemoData.forRole(role);
+
   Future<void> signInWithPassword(String email, String password) async =>
       state = await _repo.signInWithPassword(email: email, password: password);
 
@@ -46,8 +49,11 @@ class AuthController extends Notifier<AppUser?> {
   Future<void> joinUnit(String code) async => state = await _repo.joinUnit(code);
 
   Future<void> signOut() async {
-    await _repo.signOut();
-    state = null;
+    try {
+      await _repo.signOut();
+    } finally {
+      state = null;
+    }
   }
 }
 

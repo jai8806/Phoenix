@@ -19,6 +19,7 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
   final _password = TextEditingController();
   bool _busy = false;
   bool _creating = false;
+  bool _showDemo = false;
   String? _error;
   String? _notice;
 
@@ -145,6 +146,23 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
                               }),
                       child: Text(_creating ? 'I already have an account' : 'New here? Create an account'),
                     ),
+                  ],
+                  if (!isDemo) ...[
+                    const SizedBox(height: Space.lg),
+                    const Divider(),
+                    TextButton.icon(
+                      onPressed: () => setState(() => _showDemo = !_showDemo),
+                      icon: Icon(_showDemo ? Icons.expand_less : Icons.visibility_outlined),
+                      label: const Text('Explore with sample data'),
+                    ),
+                    if (_showDemo)
+                      for (final role in AppRole.values) ...[
+                        _RoleButton(
+                          role: role,
+                          onPressed: () => ref.read(authControllerProvider.notifier).exploreDemo(role),
+                        ),
+                        const SizedBox(height: Space.md),
+                      ],
                   ],
                   if (_notice != null) ...[
                     const SizedBox(height: Space.md),
