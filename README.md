@@ -27,9 +27,10 @@ See [docs/PLAN.md](docs/PLAN.md) for the roadmap and
 | Test marking with negative marking and weak-subject report | Done, unit-tested |
 | Training diary with stats and brief preview | Done; AI briefs in Phase 2 |
 | Supabase schema with row-level security | Done, checked on Postgres 16 |
-| Précis ingestion pipeline (index, cited passages, draft MCQs) | Done for Army JD/JW Part 1; see [docs/CONTENT.md](docs/CONTENT.md) |
+| Précis ingestion pipeline (index, cited passages, draft MCQs) | Army JD/JW done (297 passages, 232 MCQs); see [docs/CONTENT.md](docs/CONTENT.md) |
 | Official Army JD/JW subject list in Learn | Done (generated from the précis index) |
-| Ustaad over the knowledge base (RAG) | Phase 1 |
+| Keyword search for Ustaad (`search_chunks`) | Done in the schema |
+| Ustaad answers with Claude | Phase 1 (needs an Anthropic key in Supabase) |
 
 ## Run it
 

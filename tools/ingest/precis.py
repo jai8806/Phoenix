@@ -203,17 +203,29 @@ def _split_kinds(kinds: list[str], total: int) -> tuple[int, int]:
 
 _CHAPTER = re.compile(rf"CHAPTER\s+(?P<code>[A-Z]+\s+{ROMAN})\s*:\s*(?P<title>.+)")
 _SECTION = re.compile(r"^(?:PART\s+[IVX]+\s*[:\-–]\s*.+|INTRODUCTION|CONCLUSION|SUMMARY)\s*$")
-_NOISE = re.compile(r"^(?:[A-Z ()/]+\(JD/JW\)|DID YOU KNOW\?)$")
+_NOISE = re.compile(r"^(?:[A-Z &()/]+\((?:JD/JW|SD/SW)\)|DID YOU KNOW\?)$")
 
 
-def split_chapters(pages: list[Page], index: list[IndexEntry] | None = None) -> list[Chapter]:
+_INDEX_PAGE = re.compile(r"SUBJECT (?:CODE AND CONTENT|OF CONTENT)|CHAPTER WISE INDEX|MASTER INDEX")
+
+
+def split_chapters(pages: list[Page], index: list[IndexEntry] | None = None,
+                   continues: str | None = None) -> list[Chapter]:
     """Group pages by chapter. Titles come from the index when available,
-    because chapter headings can wrap across lines."""
+    because chapter headings can wrap across lines.
+
+    ``continues`` names the chapter a volume opens in the middle of (e.g. Part 2
+    of a précis starting with the rest of "AF IV"), so those pages aren't lost.
+    """
     titles = {e.code.replace("-", " "): e.title for e in index or []}
     chapters: list[Chapter] = []
+    if continues:
+        chapters.append(Chapter(continues, titles.get(continues, continues)))
     for page in pages:
+        if _INDEX_PAGE.search(page.text):
+            continue  # chapter-wise index pages list every chapter heading
         m = _CHAPTER.search(page.text)
-        if m and "INDEX" not in page.text[: m.start()]:
+        if m:
             code = " ".join(m.group("code").split())
             chapters.append(Chapter(code, titles.get(code, smart_title(m.group("title").strip()))))
         if chapters:
@@ -245,9 +257,15 @@ def build_passages(chapter: Chapter, max_chars: int = 1400) -> list[Passage]:
 
     def flush() -> None:
         text = " ".join(" ".join(buf).split())
-        if text:
-            passages.append(Passage(chapter.code, chapter.title, smart_title(section),
-                                    sorted(set(pages)), text))
+        title = smart_title(section)
+        if text and len(text) < 200 and passages and passages[-1].section == title:
+            # A short tail (e.g. the end of a sentence cut at the size limit) reads
+            # better as part of the passage it came from.
+            last = passages[-1]
+            last.text = f"{last.text} {text}"
+            last.book_pages = sorted(set(last.book_pages) | set(pages))
+        elif text:
+            passages.append(Passage(chapter.code, chapter.title, title, sorted(set(pages)), text))
         buf.clear()
         pages.clear()
 
@@ -282,41 +300,113 @@ def build_passages(chapter: Chapter, max_chars: int = 1400) -> list[Passage]:
 # ---------------------------------------------------------------------------
 
 _Q = re.compile(r"^Q(?P<n>\d+)\.\s*(?P<text>.*)$")
-_OPT = re.compile(r"\(([a-d])\)\s*")
+# An option marker: "(a)" — or "(b " where the book's closing bracket is missing.
+_MARK = re.compile(r"\(([a-f])(?:\)|\s)\s*")
+_END_MCQS = re.compile(r"^(?:Short|Long)\s+Answers?\b", re.I)
+LETTERS = "abcdef"
+
+
+def split_options(line: str, expected: str) -> list[tuple[str, str]]:
+    """Split a line into (letter, text) options, accepting markers only in order.
+
+    Markers are taken strictly in sequence starting from ``expected``, so text
+    such as "(c) Both (a) and (b)" keeps "(a) and (b)" inside option (c).
+    Returns an empty list if the line does not start with the expected marker.
+    """
+    found: list[tuple[str, int, int]] = []  # letter, marker start, text start
+    pos, want = 0, expected
+    while want:
+        m = None
+        for cand in _MARK.finditer(line, pos):
+            if cand.group(1) == want:
+                m = cand
+                break
+        if m is None or (not found and line[: m.start()].strip()):
+            break
+        found.append((want, m.start(), m.end()))
+        pos = m.end()
+        nxt = LETTERS.index(want) + 1
+        want = LETTERS[nxt] if nxt < len(LETTERS) else ""
+    return [(letter, line[start:(found[i + 1][1] if i + 1 < len(found) else len(line))].strip())
+            for i, (letter, _, start) in enumerate(found)]
+
+
+_TRAILING_MARK = re.compile(r"\s*\([a-f]\)\s*$")
+_ANY_MARK = re.compile(r"\([a-f]\)")
+
+
+def _fix_layouts(options: list[str]) -> list[str]:
+    """Repair two layouts the strict parser can't see on its own.
+
+    * Two columns: "(a) X (c) Y" then "(b) Z (d) W" arrive as two options
+      "X (c) Y" and "Z (d) W"; they are re-split into a, b, c, d.
+    * A misprinted letter on the last option, e.g. "(c) P (c) Q" where (d) was meant.
+    """
+    if len(options) == 2:
+        left = re.split(r"\s*\(c\)\s*", options[0], maxsplit=1)
+        right = re.split(r"\s*\(d\)\s*", options[1], maxsplit=1)
+        if len(left) == 2 and len(right) == 2:
+            options = [left[0], right[0], left[1], right[1]]
+    if 2 <= len(options) < 4:
+        own = LETTERS[len(options) - 1]
+        nxt = LETTERS[len(options)]
+        parts = re.split(rf"\s*\((?:{own}|{nxt})\)\s*", options[-1], maxsplit=1)
+        if len(parts) == 2 and all(parts):
+            options = options[:-1] + parts
+    # A lone stray marker at the end ("2 km (b)") is layout debris; one that ends
+    # a phrase like "Both (a) and (b)" is part of the answer.
+    return [_TRAILING_MARK.sub("", o) if len(_ANY_MARK.findall(o)) == 1 else o for o in options]
 
 
 def parse_mcqs(chapter: Chapter) -> list[DraftQuestion]:
+    """MCQs from the assessment exercise. Fill-in-the-blank questions (no
+    options) are skipped, as are short- and long-answer questions."""
     _, assessment = chapter_body(chapter)
     questions: list[DraftQuestion] = []
     current: dict | None = None
 
+    pending: list[str] = []  # lines after the options: a wrapped option, or a lost question's prompt
+
     def finish() -> None:
-        if current and len(current["options"]) >= 2:
+        if not current:
+            return
+        if pending and not current["closed"]:
+            current["options"][-1] += " " + " ".join(pending)
+        pending.clear()
+        options = _fix_layouts([" ".join(o.split()) for o in current["options"] if o.strip()])
+        if len(options) >= 2:
             questions.append(DraftQuestion(
-                chapter.code, current["n"], " ".join(current["prompt"].split()),
-                [" ".join(o.split()) for o in current["options"]], current["page"],
-            ))
+                chapter.code, current["n"], " ".join(current["prompt"].split()), options, current["page"]))
 
     for book_page, raw in assessment:
         line = raw.strip()
-        if not line or line == "Multiple Choice Questions":
+        if not line or line.startswith("Multiple Choice Questions"):
             continue
-        if "Answer" in line and "Questions" in line:  # short/long answer sections end the MCQs
+        if _END_MCQS.match(line):
             break
         q = _Q.match(line)
         if q:
             finish()
-            current = {"n": int(q.group("n")), "prompt": q.group("text"), "options": [], "page": book_page}
+            current = {"n": int(q.group("n")), "prompt": q.group("text"), "options": [],
+                       "page": book_page, "closed": False}
             continue
-        if current is None:
+        if current is None or current["closed"]:
             continue
-        if _OPT.match(line):
-            # One or more options on this line: "(a) X (b) Y".
-            parts = _OPT.split(line)[1:]
-            for letter, value in zip(parts[0::2], parts[1::2]):
-                current["options"].append(value.strip())
+        expected = LETTERS[len(current["options"])] if len(current["options"]) < len(LETTERS) else ""
+        opts = split_options(line, expected) if expected else []
+        if opts:
+            if pending:
+                current["options"][-1] += " " + " ".join(pending)
+                pending.clear()
+            current["options"].extend(text for _, text in opts)
+        elif current["options"] and split_options(line, "a"):
+            # A fresh "(a)" after the options means the next question's "Qn." line
+            # is missing from the PDF; the held lines were its prompt. Stop rather
+            # than merge two questions.
+            pending.clear()
+            current["closed"] = True
         elif current["options"]:
-            current["options"][-1] += " " + line  # wrapped option
+            pending.append(line)  # decided by the next line
         else:
             current["prompt"] += " " + line  # wrapped prompt
     finish()

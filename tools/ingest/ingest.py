@@ -24,6 +24,7 @@ import pdfplumber
 
 sys.path.insert(0, str(Path(__file__).parent))
 from precis import (  # noqa: E402
+    IndexEntry,
     build_passages,
     fill_book_pages,
     parse_index_groups,
@@ -42,6 +43,9 @@ def main() -> None:
     ap.add_argument("--title", required=True, help="Document title shown in citations")
     ap.add_argument("--edition", default="")
     ap.add_argument("--out", type=Path, default=Path("content/build"))
+    ap.add_argument("--index-from", type=Path,
+                    help="index.json from another volume of the same book, for volumes without a master index")
+    ap.add_argument("--continues", help='chapter code this volume opens in the middle of, e.g. "AF IV"')
     args = ap.parse_args()
 
     with pdfplumber.open(args.pdf) as pdf:
@@ -50,7 +54,12 @@ def main() -> None:
 
     index_text = "\n".join(p.text for p in pages if "MASTER INDEX" in p.text or p.text.startswith("SER CODE"))
     index = parse_master_index(index_text)
-    chapters = split_chapters(pages, index)
+    groups = parse_index_groups(index_text)
+    if not index and args.index_from:
+        borrowed = json.loads(args.index_from.read_text())
+        index = [IndexEntry(**{k: v for k, v in s.items() if k != "total_periods"}) for s in borrowed["subjects"]]
+        groups = borrowed["groups"]
+    chapters = split_chapters(pages, index, continues=args.continues)
 
     doc = {"title": args.title, "wing": args.wing, "level": args.level, "edition": args.edition,
            "source_file": args.pdf.name}
@@ -59,7 +68,7 @@ def main() -> None:
 
     (out / "index.json").write_text(json.dumps(
         {"document": doc,
-         "groups": parse_index_groups(index_text),
+         "groups": groups,
          "subjects": [{**asdict(e), "total_periods": e.total_periods} for e in index]},
         indent=2, ensure_ascii=False))
 

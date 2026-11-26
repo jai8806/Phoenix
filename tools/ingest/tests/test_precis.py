@@ -131,10 +131,75 @@ def test_to_sql_builds_an_idempotent_load():
                  "book_pages": [2, 3], "text": "It's the alpha force."}]
     questions = [{"chapter_code": "XY I", "number": 1, "prompt": "Where?", "options": ["A", "B"],
                   "book_page": 3}]
-    sql = build_sql(index, passages, questions)
+    sql = build_sql([(index, passages, questions)])
     assert sql.startswith("-- Phoenix knowledge base load") and "begin;" in sql and "commit;" in sql
     assert "delete from documents" in sql  # re-running replaces the earlier load
     assert "$phx$It's the alpha force.$phx$" in sql  # apostrophes survive dollar quoting
     assert "'draft'" in sql and "array[$phx$A$phx$, $phx$B$phx$]::text[]" in sql
     with pytest.raises(ValueError):
         q("sneaky $phx$ text")
+
+
+def test_volume_that_opens_mid_chapter_and_skips_index_pages():
+    pages = fill_book_pages([
+        to_page(1, "51\nASSESSMENT EXERCISE\nMultiple Choice Questions\nQ8. Pick one\n(a) Yes (b) No"),
+        to_page(2, "CHAPTER WISE INDEX: DEMO (JD/JW)\nSER NO SUBJECT CODE AND CONTENT PAGE NO\n"
+                   "CHAPTER XY II: SIGNALS\n1. Introduction 54"),
+        to_page(3, "SER NO SUBJECT CODE AND CONTENT PAGE NO\nCHAPTER XY III: RADIO\n2. Summary 60"),
+        to_page(4, "DEMO (SD/SW)\nCHAPTER XY II: SIGNALS\nINTRODUCTION\n1. Flags are used by day."),
+    ])
+    chapters = split_chapters(pages, continues="XY I")
+    assert [c.code for c in chapters] == ["XY I", "XY II"]  # no fake chapters from index pages
+    assert [q.number for q in parse_mcqs(chapters[0])] == [8]
+    assert build_passages(chapters[1])[0].text == "1. Flags are used by day."  # (SD/SW) banner dropped
+
+
+def test_option_parsing_handles_book_quirks():
+    from precis import split_options
+    # Missing closing bracket in the book.
+    assert split_options("(a) 25 (b 150", "a") == [("a", "25"), ("b", "150")]
+    # Answers that mention other options stay whole.
+    assert split_options("(c) Both (a) and (b) (d) None", "c") == [("c", "Both (a) and (b)"), ("d", "None")]
+    # A line that doesn't start with the expected marker is not an option line.
+    assert split_options("covers (b) only", "a") == []
+
+
+def test_mcq_stops_at_missing_question_marker_and_answer_sections():
+    pages = fill_book_pages([
+        to_page(10, "DEMO (JD/JW)\nCHAPTER XY I: DEMO"),
+        to_page(11, "2\nINTRODUCTION\n1. Text.\nASSESSMENT EXERCISE\n"
+                    "Multiple Choice Questions and Fill in the Blanks\n"
+                    "Q1. Scale 1:50000 means\n(a) 1 cm = 0.5 km (b 1 cm = 5 km\n(c) Both (a) and (b) (d) None\n"
+                    "Q2. Lost marker follows\n(a) One (b) Two\n(c) Three (d) Four\n"
+                    "Next question with no Q marker\n(a) X (b) Y\n"
+                    "Q3. ________ is a fill in the blank.\n"
+                    "Q4. Last one\n(a) Yes\n(b) No\nShort Answer Type\nQuestions\nQ1. Explain."),
+    ])
+    qs = parse_mcqs(split_chapters(pages)[0])
+    assert [q.number for q in qs] == [1, 2, 4]  # Q3 has no options
+    assert qs[0].options == ["1 cm = 0.5 km", "1 cm = 5 km", "Both (a) and (b)", "None"]
+    assert qs[1].options == ["One", "Two", "Three", "Four"]  # not merged with the unnumbered question
+    assert qs[2].options == ["Yes", "No"]  # answer-section heading not glued on
+
+
+def test_short_tail_merges_into_previous_passage():
+    long_para = "1. " + "Alpha forces patrol the plains. " * 30
+    pages = fill_book_pages([
+        to_page(10, "DEMO (JD/JW)\nCHAPTER XY I: DEMO"),
+        to_page(11, f"2\nINTRODUCTION\n{long_para}\nend of the sentence."),
+    ])
+    passages = build_passages(split_chapters(pages)[0], max_chars=400)
+    assert all(len(p.text) >= 200 for p in passages)
+    assert passages[-1].text.endswith("end of the sentence.")
+
+
+def test_two_column_options_and_misprinted_letter():
+    from precis import _fix_layouts
+    assert _fix_layouts(["Photography (c) Choreography", "Cartography (d) None of these"]) == \
+        ["Photography", "Cartography", "Choreography", "None of these"]
+    assert _fix_layouts(["Topography", "Geography", "Polygraphy (c) Radiography"]) == \
+        ["Topography", "Geography", "Polygraphy", "Radiography"]
+    assert _fix_layouts(["1 km (c) 2 km", "3 km (b) (d) 50 km"]) == ["1 km", "3 km", "2 km", "50 km"]
+    # Four ordinary options, one mentioning others, are left alone.
+    opts = ["Yes", "No", "Both (a) and (b)", "Neither"]
+    assert _fix_layouts(opts) == opts

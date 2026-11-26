@@ -21,12 +21,13 @@ public, so:
 
 | Document | Coverage | Result |
 | --- | --- | --- |
-| Special Subject (Army) JD/JW, 2025 edition, Part 1 of 2 | Master index (25 subjects); chapters AF I–IV, Indian Armed Forces (book pp. 1–50) | 56 passages, 45 draft MCQs (AF I–III; AF IV's questions are in Part 2) |
+| Special Subject (Army) JD/JW, 2025 edition, Parts 1 and 2 | The whole book: master index (25 subjects) and all 25 chapters (AF, FCBC, MC, MR, MWE; book pp. 1–280) | 297 passages, 232 draft MCQs |
+
+Not imported: fill-in-the-blank questions (they have no options), short- and
+long-answer questions, and figures (maps, signs, diagrams) — text only.
 
 Still needed:
 
-- Army JD/JW **Part 2**: Field Craft & Battle Craft, Military Communication,
-  Map Reading, Weapons & Equipment (book pp. 51–280).
 - Army **SD/SW** précis. JD/JW is the Junior Division, i.e. the A
   Certificate; B and C Certificate cadets follow the Senior Division précis.
 - The **common subjects** précis, plus Navy, Air Force and RVC special subjects.
@@ -36,15 +37,20 @@ Still needed:
 ```bash
 pip install pdfplumber
 
-# 1. Parse a précis into the index, passages and draft questions (content/build/<name>/)
+# 1. Parse each volume into the index, passages and draft questions (content/build/<name>/).
+#    A later volume borrows the first one's index and can open mid-chapter.
 python3 tools/ingest/ingest.py content/sources/army_jd_jw_2025_part1.pdf \
     --wing army --level junior --title "Special Subject (Army) JD/JW" --edition 2025
+python3 tools/ingest/ingest.py content/sources/army_jd_jw_2025_part2.pdf \
+    --wing army --level junior --title "Special Subject (Army) JD/JW" --edition 2025 \
+    --index-from content/build/army_jd_jw_2025_part1/index.json --continues "AF IV"
 
 # 2. Try retrieval locally (keyword search, no AI call)
 python3 tools/ingest/ask.py "Who is the Supreme Commander of the Armed Forces?"
 
-# 3. Write a SQL load script to paste into the Supabase SQL Editor (content/build/<name>/load.sql)
-python3 tools/ingest/to_sql.py content/build/army_jd_jw_2025_part1
+# 3. One SQL load script per book (all volumes together), for the Supabase SQL Editor
+python3 tools/ingest/to_sql.py content/build/army_jd_jw_2025_part1 content/build/army_jd_jw_2025_part2 \
+    --out content/build/army_jd_jw_2025.sql
 
 # 4. Regenerate the app's subject list from the index
 python3 tools/ingest/export_syllabus.py content/build/army_jd_jw_2025_part1/index.json \
@@ -68,14 +74,19 @@ The précis use one fixed layout, which `tools/ingest/precis.py` relies on:
    at numbered paragraphs, into passages of about 1,400 characters. Each one
    keeps its chapter, section and printed page numbers, which become the
    citation (e.g. "Special Subject (Army) JD/JW · AF I · Introduction · p. 2").
-4. **Assessment MCQs** are parsed into draft questions. **The précis prints no
+4. **Assessment MCQs** are parsed into draft questions. Option markers are
+   read strictly in order (a, b, c, d), so an answer like "Both (a) and (b)"
+   stays whole. The parser also copes with the book's quirks: a missing
+   bracket ("(b 150"), two-column options ("(a) … (c) …" over "(b) … (d) …"),
+   a misprinted letter, and a question whose "Qn." marker is missing (that
+   question is dropped rather than merged into the one before). **The précis prints no
    answer key**, so every question is stored as `draft` with no correct answer
    until an ANO sets and approves it in the Command Center. Short- and
    long-answer questions are not imported yet.
 
 ## Loading into Supabase
 
-`to_sql.py` writes a `load.sql` per précis. It inserts a `documents` row for
+`to_sql.py` writes one load script per book. It inserts a `documents` row for
 the shared official syllabus, its passages into `document_chunks`, and the MCQs
 into `questions` as drafts. Paste it into the SQL Editor; re-running it
 replaces the earlier load. Shared material is readable only by signed-in
