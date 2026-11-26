@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -13,6 +15,10 @@ class FakeBackend implements AuthRepository {
 
   final bool confirmEmail;
   AppUser? _user;
+  final links = StreamController<AppUser>.broadcast();
+
+  @override
+  Stream<AppUser> get externalSignIns => links.stream;
 
   @override
   bool get isDemo => false;
@@ -123,5 +129,16 @@ void main() {
     await tester.pumpAndSettle();
     expect(loc(c), Routes.today);
     expect(find.text('Good morning, Aarav'), findsOneWidget);
+  });
+
+  testWidgets('opening the confirmation link signs the user in and asks for the unit code', (tester) async {
+    final backend = FakeBackend(confirmEmail: true);
+    final c = await pump(tester, backend);
+    await createAccount(tester);
+    expect(loc(c), Routes.signIn);
+    backend.links.add(const AppUser(id: 'u1', fullName: 'Meera Nair', role: AppRole.cadet));
+    await tester.pumpAndSettle();
+    expect(loc(c), Routes.joinUnit);
+    expect(find.text('Join your unit'), findsOneWidget);
   });
 }

@@ -85,6 +85,8 @@ class LiveAuth implements AuthRepository {
   @override
   bool get isDemo => false;
   @override
+  Stream<AppUser> get externalSignIns => const Stream.empty();
+  @override
   Future<AppUser?> restoreSession() async => user;
   @override
   Future<AppUser> signInAs(AppRole role) => throw UnsupportedError('');

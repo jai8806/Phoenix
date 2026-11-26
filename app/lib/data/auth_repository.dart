@@ -1,10 +1,21 @@
+import 'dart:async';
+
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'demo/demo_data.dart';
 import 'models/user.dart';
 
+/// Where the confirmation email sends people: opens the app, which finishes
+/// signing them in. Must be listed in Supabase → Authentication → URL
+/// Configuration → Redirect URLs.
+const authRedirectUrl = 'app.phoenixcadet.phoenix://login-callback';
+
 abstract interface class AuthRepository {
   bool get isDemo;
+
+  /// Users who become signed in outside the sign-in screen, e.g. by opening
+  /// the email confirmation link.
+  Stream<AppUser> get externalSignIns;
   Future<AppUser?> restoreSession();
   Future<AppUser> signInAs(AppRole role);
   Future<AppUser> signInWithPassword({required String email, required String password});
@@ -31,6 +42,9 @@ class AuthFailure implements Exception {
 class DemoAuthRepository implements AuthRepository {
   @override
   bool get isDemo => true;
+
+  @override
+  Stream<AppUser> get externalSignIns => const Stream.empty();
 
   @override
   Future<AppUser?> restoreSession() async => null;
@@ -62,6 +76,11 @@ class SupabaseAuthRepository implements AuthRepository {
   bool get isDemo => false;
 
   @override
+  Stream<AppUser> get externalSignIns => _client.auth.onAuthStateChange
+      .where((s) => s.event == AuthChangeEvent.signedIn && s.session != null)
+      .asyncMap((s) => _loadProfile(s.session!.user.id));
+
+  @override
   Future<AppUser?> restoreSession() async {
     final user = _client.auth.currentUser;
     return user == null ? null : _loadProfile(user.id);
@@ -86,7 +105,12 @@ class SupabaseAuthRepository implements AuthRepository {
   @override
   Future<AppUser?> signUp({required String email, required String password, required String fullName}) async {
     try {
-      final res = await _client.auth.signUp(email: email, password: password, data: {'full_name': fullName});
+      final res = await _client.auth.signUp(
+        email: email,
+        password: password,
+        data: {'full_name': fullName},
+        emailRedirectTo: authRedirectUrl,
+      );
       if (res.session == null || res.user == null) return null; // email confirmation pending
       return await _loadProfile(res.user!.id);
     } on AuthException catch (e) {

@@ -18,6 +18,11 @@ ever has to leave the dashboard.
 4. **ANO account:** the ANO creates an account in the app and confirms their
    email. Then run the `update profiles … role = 'ano'` statement at the bottom
    of `seed/create_unit.sql` with their email address.
+5. **Confirmation links:** Authentication → URL Configuration → add
+   `app.phoenixcadet.phoenix://login-callback` under **Redirect URLs** (and
+   set it as the **Site URL**). Otherwise the email link opens
+   `localhost:3000` (the email still gets confirmed; the cadet then signs in
+   by hand).
 5. **Cadets** create accounts in the app and enter the join code.
 6. **Question review and Ustaad tables:** run
    `migrations/20261126010000_review_and_ustaad.sql`.

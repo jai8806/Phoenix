@@ -44,7 +44,8 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
       if (!signedIn && mounted) {
         setState(() {
           _creating = false;
-          _notice = 'Account created. Open the confirmation link we emailed to $email, then sign in.';
+          _notice = 'Account created. Open the confirmation link we emailed to $email on this phone: '
+              'it opens Phoenix and signs you in.';
         });
       }
     });

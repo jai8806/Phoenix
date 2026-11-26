@@ -28,7 +28,17 @@ final authControllerProvider = NotifierProvider<AuthController, AppUser?>(AuthCo
 
 class AuthController extends Notifier<AppUser?> {
   @override
-  AppUser? build() => ref.read(initialUserProvider);
+  AppUser? build() {
+    // Opening the confirmation link signs the user in behind the scenes.
+    final sub = ref.read(authRepositoryProvider).externalSignIns.listen(
+      (user) {
+        if (state?.id != user.id) state = user;
+      },
+      onError: (_) {}, // the sign-in screen still works if this fails
+    );
+    ref.onDispose(sub.cancel);
+    return ref.read(initialUserProvider);
+  }
 
   AuthRepository get _repo => ref.read(authRepositoryProvider);
 
