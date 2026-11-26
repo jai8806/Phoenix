@@ -61,4 +61,7 @@ class AppUser {
   String get firstName => fullName.split(' ').first;
 
   String get displayName => rank == null ? fullName : '$rank $fullName';
+
+  /// New accounts have no unit until they join with the code their ANO shares.
+  bool get hasUnit => unitName != null;
 }

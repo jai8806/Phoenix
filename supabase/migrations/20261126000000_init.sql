@@ -140,14 +140,32 @@ create table documents (
 create table document_chunks (
   id bigserial primary key,
   document_id uuid not null references documents (id) on delete cascade,
-  page smallint,
-  heading text,
+  page smallint,                     -- first printed page of the passage
+  page_end smallint,                 -- last printed page, when it spans pages
+  heading text,                      -- e.g. "AF I · Part I: The Indian Army"
   content text not null,
   embedding vector(1024),            -- bge-m3 / voyage multilingual dimension
-  fts tsvector generated always as (to_tsvector('simple', content)) stored
+  fts tsvector generated always as (to_tsvector('english', coalesce(heading, '') || ' ' || content)) stored
 );
 create index on document_chunks using hnsw (embedding vector_cosine_ops);
 create index on document_chunks using gin (fts);
+
+-- Keyword retrieval for Ustaad v1 (vector search joins it once embeddings exist).
+-- Runs with the caller's rights, so RLS limits it to documents they may read.
+-- Words are OR-ed so a question like "who is the supreme commander" still matches.
+create or replace function public.search_chunks(q text, match_count int default 5)
+returns table (chunk_id bigint, document_title text, heading text, page smallint, page_end smallint,
+               content text, rank real)
+language sql stable set search_path = public as $$
+  select c.id, d.title, c.heading, c.page, c.page_end, c.content,
+         ts_rank(c.fts, query) as rank
+  from document_chunks c
+  join documents d on d.id = c.document_id,
+       lateral (select nullif(replace(plainto_tsquery('english', q)::text, '&', '|'), '')::tsquery as query) t
+  where t.query is not null and c.fts @@ t.query
+  order by rank desc
+  limit least(match_count, 20)
+$$;
 
 -- ---------------------------------------------------------------------------
 -- Question bank, tests and attempts
@@ -159,12 +177,15 @@ create table questions (
   wing wing,                         -- null = common subject
   prompt text not null,
   options text[] not null check (array_length(options, 1) between 2 and 6),
-  correct_index smallint not null,
+  -- Null while a draft: the précis prints no answer key, so an ANO sets it on approval.
+  correct_index smallint check (correct_index between 0 and array_length(options, 1) - 1),
   explanation text,
   source_chunk_id bigint references document_chunks (id) on delete set null,
   status text not null default 'approved' check (status in ('draft', 'approved')),
+  source_page smallint,
   created_by uuid references profiles (id),
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  check (status = 'draft' or correct_index is not null)
 );
 
 create table tests (
@@ -317,8 +338,10 @@ create policy "admin write" on camp_records for all
   using (is_unit_admin() and cadet_id in (select id from profiles where unit_id = my_unit_id()))
   with check (is_unit_admin() and cadet_id in (select id from profiles where unit_id = my_unit_id()));
 
+-- Shared official material (unit_id null) is readable only by signed-in members
+-- of a unit, never anonymously: the précis may not be republished.
 create policy "shared or unit read" on documents for select
-  using (unit_id is null or unit_id = my_unit_id());
+  using (my_unit_id() is not null and (unit_id is null or unit_id = my_unit_id()));
 create policy "admin write" on documents for all
   using (is_unit_admin() and unit_id = my_unit_id())
   with check (is_unit_admin() and unit_id = my_unit_id());
@@ -327,7 +350,7 @@ create policy "read chunks of visible docs" on document_chunks for select
   using (document_id in (select id from documents));
 
 create policy "read approved or admin" on questions for select
-  using ((unit_id is null or unit_id = my_unit_id())
+  using (my_unit_id() is not null and (unit_id is null or unit_id = my_unit_id())
          and (status = 'approved' or is_unit_admin()));
 create policy "admin write" on questions for all
   using (is_unit_admin() and unit_id = my_unit_id())

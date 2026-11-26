@@ -43,7 +43,10 @@ python3 tools/ingest/ingest.py content/sources/army_jd_jw_2025_part1.pdf \
 # 2. Try retrieval locally (keyword search, no AI call)
 python3 tools/ingest/ask.py "Who is the Supreme Commander of the Armed Forces?"
 
-# 3. Regenerate the app's subject list from the index
+# 3. Write a SQL load script to paste into the Supabase SQL Editor (content/build/<name>/load.sql)
+python3 tools/ingest/to_sql.py content/build/army_jd_jw_2025_part1
+
+# 4. Regenerate the app's subject list from the index
 python3 tools/ingest/export_syllabus.py content/build/army_jd_jw_2025_part1/index.json \
     --name armyJunior --out app/lib/data/syllabus/army_junior.dart
 
@@ -70,12 +73,22 @@ The précis use one fixed layout, which `tools/ingest/precis.py` relies on:
    until an ANO sets and approves it in the Command Center. Short- and
    long-answer questions are not imported yet.
 
-## Next steps (Phase 1, needs a Supabase project)
+## Loading into Supabase
 
-1. Upload each PDF to a private storage bucket and insert a `documents` row.
-2. Load `passages.jsonl` into `document_chunks`, with embeddings from a
-   multilingual model (1024 dimensions to match the schema).
-3. Load `questions.jsonl` into `questions` as `draft`. The ANO's review queue
-   lets them pick the correct option, edit and approve.
-4. Ustaad's Edge Function: hybrid search (full text plus vector), then Claude
-   answers only from the retrieved passages and cites them.
+`to_sql.py` writes a `load.sql` per précis. It inserts a `documents` row for
+the shared official syllabus, its passages into `document_chunks`, and the MCQs
+into `questions` as drafts. Paste it into the SQL Editor; re-running it
+replaces the earlier load. Shared material is readable only by signed-in
+members of a unit (never anonymously), and drafts only by unit admins.
+`search_chunks(question)` returns the best passages with their pages for
+Ustaad.
+
+## Next steps
+
+1. Upload the PDFs to a private storage bucket so the ANO can open the source page.
+2. Add embeddings (multilingual, 1024 dimensions) and blend vector search into
+   `search_chunks`.
+3. ANO review queue in the Command Center: pick the correct option, edit and
+   approve draft questions.
+4. Ustaad Edge Function: `search_chunks`, then Claude answers only from those
+   passages and cites them.

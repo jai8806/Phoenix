@@ -57,3 +57,17 @@ select title from announcements;
 \echo '--- unit B cadet tries to join unit A while already in B (expect error, unit stays Unit B):'
 select join_unit('JOINA');
 select u.name from profiles p join units u on u.id = p.unit_id where p.id = auth.uid();
+
+-- Knowledge base (run tools/ingest/to_sql.py output first for non-zero counts).
+set request.jwt.claim.sub = '';
+\echo '--- anonymous visitor reads précis passages (expect 0):'
+select count(*) from document_chunks;
+select count(*) from search_chunks('supreme commander armed forces');
+set request.jwt.claim.sub = '00000000-0000-0000-0000-000000000003';
+\echo '--- cadet in a unit searches the précis (expect matches, best first):'
+select document_title, heading, page from search_chunks('Who is the supreme commander of the armed forces?', 2);
+\echo '--- cadet sees draft questions? (expect 0: drafts are admin-only):'
+select count(*) from questions where status = 'draft';
+set request.jwt.claim.sub = '00000000-0000-0000-0000-000000000001';
+\echo '--- ANO sees draft questions (expect > 0 after a load):'
+select count(*) from questions where status = 'draft';

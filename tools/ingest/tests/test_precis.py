@@ -120,3 +120,21 @@ def test_search_finds_relevant_passage_and_refuses_unrelated():
 def test_index_groups():
     from precis import parse_index_groups
     assert parse_index_groups(INDEX) == {"XY": "Demo Forces"}
+
+
+def test_to_sql_builds_an_idempotent_load():
+    from to_sql import build_sql, q
+    import pytest
+    index = {"document": {"title": "Demo", "edition": "2025", "wing": "army", "level": "junior",
+                          "source_file": "demo.pdf"}}
+    passages = [{"chapter_code": "XY I", "chapter_title": "Intro", "section": "Introduction",
+                 "book_pages": [2, 3], "text": "It's the alpha force."}]
+    questions = [{"chapter_code": "XY I", "number": 1, "prompt": "Where?", "options": ["A", "B"],
+                  "book_page": 3}]
+    sql = build_sql(index, passages, questions)
+    assert sql.startswith("-- Phoenix knowledge base load") and "begin;" in sql and "commit;" in sql
+    assert "delete from documents" in sql  # re-running replaces the earlier load
+    assert "$phx$It's the alpha force.$phx$" in sql  # apostrophes survive dollar quoting
+    assert "'draft'" in sql and "array[$phx$A$phx$, $phx$B$phx$]::text[]" in sql
+    with pytest.raises(ValueError):
+        q("sneaky $phx$ text")

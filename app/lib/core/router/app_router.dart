@@ -4,6 +4,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../../data/models/user.dart';
 import '../../data/providers.dart';
+import '../../features/auth/join_unit_screen.dart';
 import '../../features/auth/sign_in_screen.dart';
 import '../../features/cadet/cadet_shell.dart';
 import '../../features/cadet/diary_entry_screen.dart';
@@ -23,6 +24,7 @@ import '../../features/shared/calendar_screen.dart';
 
 abstract final class Routes {
   static const signIn = '/sign-in';
+  static const joinUnit = '/join';
   static const today = '/cadet/today';
   static const learn = '/cadet/learn';
   static const ustaad = '/cadet/ustaad';
@@ -55,12 +57,14 @@ final routerProvider = Provider<GoRouter>((ref) {
       final user = auth.value;
       final loc = state.matchedLocation;
       if (user == null) return loc == Routes.signIn ? null : Routes.signIn;
-      if (loc == Routes.signIn) return Routes.home(user);
+      if (!user.hasUnit) return loc == Routes.joinUnit ? null : Routes.joinUnit;
+      if (loc == Routes.signIn || loc == Routes.joinUnit) return Routes.home(user);
       if (loc.startsWith('/command') && !user.role.canAdminister) return Routes.today;
       return null;
     },
     routes: [
       GoRoute(path: Routes.signIn, builder: (_, _) => const SignInScreen()),
+      GoRoute(path: Routes.joinUnit, builder: (_, _) => const JoinUnitScreen()),
       StatefulShellRoute.indexedStack(
         builder: (_, _, shell) => CadetShell(shell: shell),
         branches: [

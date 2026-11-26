@@ -36,6 +36,15 @@ class AuthController extends Notifier<AppUser?> {
   Future<void> signInWithPassword(String email, String password) async =>
       state = await _repo.signInWithPassword(email: email, password: password);
 
+  /// Returns false when the account needs its email confirmed before signing in.
+  Future<bool> signUp(String email, String password, String fullName) async {
+    final user = await _repo.signUp(email: email, password: password, fullName: fullName);
+    if (user != null) state = user;
+    return user != null;
+  }
+
+  Future<void> joinUnit(String code) async => state = await _repo.joinUnit(code);
+
   Future<void> signOut() async {
     await _repo.signOut();
     state = null;

@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../core/theme/tokens.dart';
+import '../../data/auth_repository.dart';
 import '../../data/models/user.dart';
 import '../../data/providers.dart';
 
@@ -13,29 +14,53 @@ class SignInScreen extends ConsumerStatefulWidget {
 }
 
 class _SignInScreenState extends ConsumerState<SignInScreen> {
+  final _name = TextEditingController();
   final _email = TextEditingController();
   final _password = TextEditingController();
   bool _busy = false;
+  bool _creating = false;
   String? _error;
+  String? _notice;
 
   @override
   void dispose() {
+    _name.dispose();
     _email.dispose();
     _password.dispose();
     super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final auth = ref.read(authControllerProvider.notifier);
+    final email = _email.text.trim();
+    if (!_creating) return _run(() => auth.signInWithPassword(email, _password.text));
+    if (_name.text.trim().isEmpty) {
+      setState(() => _error = 'Enter your full name as it appears on your NCC records.');
+      return;
+    }
+    await _run(() async {
+      final signedIn = await auth.signUp(email, _password.text, _name.text.trim());
+      if (!signedIn && mounted) {
+        setState(() {
+          _creating = false;
+          _notice = 'Account created. Open the confirmation link we emailed to $email, then sign in.';
+        });
+      }
+    });
   }
 
   Future<void> _run(Future<void> Function() action) async {
     setState(() {
       _busy = true;
       _error = null;
+      _notice = null;
     });
     try {
       await action();
+    } on AuthFailure catch (e) {
+      if (mounted) setState(() => _error = e.message);
     } catch (_) {
-      if (mounted) {
-        setState(() => _error = "We couldn't sign you in. Check your email and password, then try again.");
-      }
+      if (mounted) setState(() => _error = "Something went wrong. Check your connection and try again.");
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -77,6 +102,17 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
                       const SizedBox(height: Space.md),
                     ],
                   ] else ...[
+                    Text(_creating ? 'Create your account' : 'Sign in', style: t.titleLarge),
+                    const SizedBox(height: Space.lg),
+                    if (_creating) ...[
+                      TextField(
+                        controller: _name,
+                        decoration: const InputDecoration(labelText: 'Full name'),
+                        textCapitalization: TextCapitalization.words,
+                        autofillHints: const [AutofillHints.name],
+                      ),
+                      const SizedBox(height: Space.md),
+                    ],
                     TextField(
                       controller: _email,
                       decoration: const InputDecoration(labelText: 'Email'),
@@ -86,18 +122,33 @@ class _SignInScreenState extends ConsumerState<SignInScreen> {
                     const SizedBox(height: Space.md),
                     TextField(
                       controller: _password,
-                      decoration: const InputDecoration(labelText: 'Password'),
+                      decoration: InputDecoration(
+                        labelText: 'Password',
+                        helperText: _creating ? 'At least 8 characters' : null,
+                      ),
                       obscureText: true,
-                      autofillHints: const [AutofillHints.password],
-                      onSubmitted: (_) => _run(() => auth.signInWithPassword(_email.text.trim(), _password.text)),
+                      autofillHints: [_creating ? AutofillHints.newPassword : AutofillHints.password],
+                      onSubmitted: (_) => _busy ? null : _submit(),
                     ),
                     const SizedBox(height: Space.lg),
                     FilledButton(
+                      onPressed: _busy ? null : _submit,
+                      child: Text(_creating ? 'Create account' : 'Sign in'),
+                    ),
+                    const SizedBox(height: Space.sm),
+                    TextButton(
                       onPressed: _busy
                           ? null
-                          : () => _run(() => auth.signInWithPassword(_email.text.trim(), _password.text)),
-                      child: const Text('Sign in'),
+                          : () => setState(() {
+                                _creating = !_creating;
+                                _error = null;
+                              }),
+                      child: Text(_creating ? 'I already have an account' : 'New here? Create an account'),
                     ),
+                  ],
+                  if (_notice != null) ...[
+                    const SizedBox(height: Space.md),
+                    Text(_notice!, style: t.bodyMedium?.copyWith(color: c.primary)),
                   ],
                   if (_error != null) ...[
                     const SizedBox(height: Space.md),
