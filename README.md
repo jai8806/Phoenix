@@ -27,6 +27,8 @@ See [docs/PLAN.md](docs/PLAN.md) for the roadmap and
 | Test marking with negative marking and weak-subject report | Done, unit-tested |
 | Training diary with stats and brief preview | Done; AI briefs in Phase 2 |
 | Supabase schema with row-level security | Done, checked on Postgres 16 |
+| Précis ingestion pipeline (index, cited passages, draft MCQs) | Done for Army JD/JW Part 1; see [docs/CONTENT.md](docs/CONTENT.md) |
+| Official Army JD/JW subject list in Learn | Done (generated from the précis index) |
 | Ustaad over the knowledge base (RAG) | Phase 1 |
 
 ## Run it
@@ -55,11 +57,14 @@ flutter test
 ```
 
 The database policies have their own check; see [supabase/README.md](supabase/README.md).
+The ingestion pipeline: `python3 -m pytest tools/ingest/tests`.
 
 ## Repository layout
 
 ```
 app/        Flutter app (Android, iOS, web) — cadet app and Command Center
 supabase/   Database migrations and row-level-security checks
-docs/       Plan, architecture, screenshots
+tools/      Précis ingestion pipeline (Python)
+content/    Local précis sources and build output — git-ignored (DGNCC copyright)
+docs/       Plan, architecture, content guide, screenshots
 ```

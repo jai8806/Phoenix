@@ -5,18 +5,26 @@ import 'package:material_ui/material_ui.dart';
 
 import '../../core/router/app_router.dart';
 import '../../core/theme/tokens.dart';
-import '../../data/demo/syllabus.dart';
 import '../../data/models/test.dart';
 import '../../data/models/user.dart';
 import '../../data/providers.dart';
+import '../../data/syllabus/syllabus.dart';
 import '../shared/widgets.dart';
 
-class LearnScreen extends ConsumerWidget {
+class LearnScreen extends ConsumerStatefulWidget {
   const LearnScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<LearnScreen> createState() => _LearnScreenState();
+}
+
+class _LearnScreenState extends ConsumerState<LearnScreen> {
+  SyllabusLevel? _level;
+
+  @override
+  Widget build(BuildContext context) {
     final user = ref.watch(authControllerProvider);
+    final level = _level ?? SyllabusLevel.of(user?.division);
     final wing = user?.wing ?? Wing.army;
     final now = ref.watch(clockProvider)();
     final tests = ref.watch(testsProvider);
@@ -61,19 +69,16 @@ class LearnScreen extends ConsumerWidget {
             for (final test in tests)
               _TestTile(test: test, isOpen: test.opensAt == null || !test.opensAt!.isAfter(now)),
           ]),
-        Padding(
-          padding: const EdgeInsets.only(top: Space.xl, bottom: Space.sm),
-          child: Row(children: [
-            Expanded(
-              child: Text('SYLLABUS · ${wing.label.toUpperCase()}',
-                  style: t.labelLarge?.copyWith(letterSpacing: 1.1, color: c.onSurfaceVariant)),
-            ),
-            const DemoBadge(text: 'Provisional list'),
-          ]),
+        SectionHeader('Syllabus · ${wing.label}'),
+        SegmentedButton<SyllabusLevel>(
+          segments: [for (final l in SyllabusLevel.values) ButtonSegment(value: l, label: Text(l.label))],
+          selected: {level},
+          onSelectionChanged: (s) => setState(() => _level = s.first),
         ),
-        _SubjectGroup(title: 'Common subjects', subjects: commonSubjects),
         const SizedBox(height: Space.md),
-        _SubjectGroup(title: '${wing.label} subjects', subjects: wingSubjects[wing] ?? const []),
+        _SyllabusCard(syllabus: specialSyllabus(wing, level)),
+        const SizedBox(height: Space.md),
+        const _SyllabusCard(syllabus: commonSyllabus),
       ]),
     );
   }
@@ -105,30 +110,71 @@ class _TestTile extends StatelessWidget {
 
 String _fmt(double v) => v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toString();
 
-class _SubjectGroup extends StatelessWidget {
-  const _SubjectGroup({required this.title, required this.subjects});
+class _SyllabusCard extends StatelessWidget {
+  const _SyllabusCard({required this.syllabus});
 
-  final String title;
-  final List<String> subjects;
+  final Syllabus syllabus;
 
   @override
   Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    final c = Theme.of(context).colorScheme;
     return Card(
-      child: ExpansionTile(
-        initiallyExpanded: true,
-        shape: const Border(),
-        title: Text(title, style: Theme.of(context).textTheme.titleSmall),
-        subtitle: Text('${subjects.length} subjects'),
-        children: [
-          for (final s in subjects)
-            ListTile(
-              dense: true,
-              leading: const Icon(Icons.article_outlined, size: 20),
-              title: Text(s),
-              trailing: Text('Notes soon', style: Theme.of(context).textTheme.bodySmall),
-            ),
-        ],
-      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(Space.lg, Space.md, Space.lg, Space.sm),
+          child: Row(children: [
+            Icon(syllabus.official ? Icons.verified_outlined : Icons.pending_outlined, size: 18,
+                color: syllabus.official ? c.primary : c.onSurfaceVariant),
+            const SizedBox(width: Space.sm),
+            Expanded(child: Text(syllabus.source, style: t.bodySmall?.copyWith(color: c.onSurfaceVariant))),
+            if (!syllabus.official) const DemoBadge(text: 'Provisional'),
+          ]),
+        ),
+        for (final g in syllabus.groups) _GroupTile(group: g, showPeriods: syllabus.official),
+      ]),
+    );
+  }
+}
+
+class _GroupTile extends StatelessWidget {
+  const _GroupTile({required this.group, required this.showPeriods});
+
+  final SubjectGroup group;
+  final bool showPeriods;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    final c = Theme.of(context).colorScheme;
+    final n = group.subjects.length;
+    return ExpansionTile(
+      shape: const Border(),
+      title: Text(group.name, style: t.titleSmall),
+      subtitle: Text([
+        '$n subject${n == 1 ? '' : 's'}',
+        if (showPeriods) '${group.totalPeriods} periods',
+      ].join(' · ')),
+      children: [
+        for (final s in group.subjects)
+          ListTile(
+            dense: true,
+            leading: s.code.isEmpty
+                ? const Icon(Icons.article_outlined, size: 20)
+                : SizedBox(
+                    width: 64,
+                    child: Text(s.code, style: t.labelMedium?.copyWith(color: c.primary)),
+                  ),
+            title: Text(s.title),
+            subtitle: showPeriods
+                ? Text([
+                    if (s.theoryPeriods > 0) '${s.theoryPeriods} theory',
+                    if (s.practicalPeriods > 0) '${s.practicalPeriods} practical',
+                    if (s.page != null) 'p. ${s.page}',
+                  ].join(' · '))
+                : null,
+          ),
+      ],
     );
   }
 }

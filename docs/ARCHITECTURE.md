@@ -22,7 +22,8 @@ Flutter app (Android · iOS · web)
 | `lib/data/models/` | Plain Dart models: users, comms, tests, diary, roster |
 | `lib/data/providers.dart` | Riverpod providers and controllers (state lives here) |
 | `lib/data/auth_repository.dart` | Demo and Supabase sign-in behind one interface |
-| `lib/data/demo/` | Sample data and a provisional syllabus list |
+| `lib/data/demo/` | Sample data |
+| `lib/data/syllabus/` | Syllabus model; `army_junior.dart` is generated from the précis index |
 | `lib/domain/` | Pure logic with unit tests: eligibility, diary stats (test marking lives in `models/test.dart`) |
 | `lib/features/` | Screens: `auth`, `cadet`, `command`, `shared` |
 
@@ -54,3 +55,9 @@ guarded by RLS using three helpers: `my_unit_id()`, `my_role()`,
   index for hybrid retrieval.
 
 `supabase/tests/rls_check.sql` exercises these rules (see `supabase/README.md`).
+
+## Content pipeline (`tools/ingest/`)
+
+Python scripts that parse précis PDFs into the subject index, cited passages
+and draft questions, try retrieval locally, and generate the app's subject
+list. Extracted text never enters the repository. See [CONTENT.md](CONTENT.md).

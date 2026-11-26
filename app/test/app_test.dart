@@ -5,6 +5,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:phoenix/app.dart';
 import 'package:phoenix/core/router/app_router.dart';
 import 'package:phoenix/features/cadet/diary_entry_screen.dart';
+import 'package:phoenix/features/cadet/learn_screen.dart';
 import 'package:phoenix/data/models/user.dart';
 import 'package:phoenix/data/providers.dart';
 
@@ -177,5 +178,23 @@ void main() {
     expect(location(c), Routes.signIn);
     expect(c.read(authControllerProvider), isNull);
     expect(GoRouter.of(tester.element(find.text('Demo mode'))), isNotNull);
+  });
+
+  testWidgets('Learn shows the official Army junior syllabus when switched to Junior', (tester) async {
+    await pumpApp(tester);
+    await signInAs(tester, AppRole.cadet); // senior division cadet
+    await tester.tap(find.text('Learn'));
+    await tester.pumpAndSettle();
+
+    Future<void> scrollTo(Finder f) => tester.scrollUntilVisible(f, 300,
+        scrollable: find.descendant(of: find.byType(LearnScreen), matching: find.byType(Scrollable)).first);
+
+    await scrollTo(find.text('Junior (JD/JW)'));
+    expect(find.textContaining('Provisional list'), findsWidgets);
+    await tester.tap(find.text('Junior (JD/JW)'));
+    await tester.pumpAndSettle();
+    await scrollTo(find.text('Map Reading'));
+    expect(find.text('Special Subject (Army) JD/JW · DGNCC Précis 2025'), findsOneWidget);
+    expect(find.text('10 subjects · 27 periods'), findsOneWidget);
   });
 }
