@@ -26,6 +26,10 @@ abstract interface class AuthRepository {
 
   /// Joins the unit whose code the ANO shared, and returns the updated user.
   Future<AppUser> joinUnit(String code);
+
+  /// Saves the member's own name, rank, regimental number, wing, division
+  /// and training year, and returns the saved user.
+  Future<AppUser> updateProfile(AppUser updated);
   Future<void> signOut();
 }
 
@@ -62,6 +66,9 @@ class DemoAuthRepository implements AuthRepository {
 
   @override
   Future<AppUser> joinUnit(String code) => throw UnsupportedError('Units need a Supabase backend.');
+
+  @override
+  Future<AppUser> updateProfile(AppUser updated) async => updated;
 
   @override
   Future<void> signOut() async {}
@@ -139,37 +146,22 @@ class SupabaseAuthRepository implements AuthRepository {
   @override
   Future<void> signOut() => _client.auth.signOut();
 
+  @override
+  Future<AppUser> updateProfile(AppUser updated) async {
+    try {
+      await _client.from('profiles').update(profileToRow(updated)).eq('id', updated.id);
+    } on PostgrestException {
+      throw const AuthFailure("We couldn't save your profile. Check your connection and try again.");
+    }
+    return _loadProfile(updated.id);
+  }
+
   Future<AppUser> _loadProfile(String id) async {
     final row = await _client
         .from('profiles')
         .select('id, full_name, role, rank, regimental_no, wing, division, training_year, unit_id, units(name)')
         .eq('id', id)
         .single();
-    return AppUser(
-      id: row['id'] as String,
-      fullName: row['full_name'] as String,
-      role: _role(row['role'] as String),
-      rank: row['rank'] as String?,
-      regimentalNo: row['regimental_no'] as String?,
-      wing: _byName(Wing.values, row['wing'] as String?),
-      division: _byName(Division.values, row['division'] as String?),
-      trainingYear: row['training_year'] as int?,
-      unitName: (row['units'] as Map<String, dynamic>?)?['name'] as String?,
-      unitId: row['unit_id'] as String?,
-    );
-  }
-
-  static AppRole _role(String v) => switch (v) {
-        'ano' => AppRole.ano,
-        'senior_cadet' => AppRole.seniorCadet,
-        _ => AppRole.cadet,
-      };
-
-  static T? _byName<T extends Enum>(List<T> values, String? name) {
-    if (name == null) return null;
-    for (final v in values) {
-      if (v.name == name) return v;
-    }
-    return null;
+    return appUserFromRow(row);
   }
 }

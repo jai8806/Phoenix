@@ -15,6 +15,7 @@ import 'package:phoenix/data/unit_repository.dart';
 import 'package:phoenix/data/precis_pack.dart';
 import 'package:phoenix/domain/precis_search.dart';
 import 'package:phoenix/features/cadet/diary_entry_screen.dart';
+import 'package:phoenix/features/cadet/edit_profile_screen.dart';
 
 final now = DateTime(2026, 11, 26, 9);
 
@@ -106,6 +107,74 @@ class FakeUnitRepo implements UnitRepository {
   @override
   Future<List<KnowledgeDocument>> documents() async => const [];
 
+  // Hosted tests --------------------------------------------------------------
+  final testsList = <TestDefinition>[];
+  final testQs = <String, List<Question>>{};
+  final attemptsByTest = <String, List<AttemptRecord>>{};
+  final myScores = <String, double>{};
+  final submissions = <(String, Map<String, int>)>[];
+  bool failSubmit = false;
+  final membersList = <AppUser>[cadet, ano];
+  final memberUpdates = <(String, AppRole, String?)>[];
+
+  @override
+  Future<List<TestDefinition>> tests() async => [
+        for (final t in testsList)
+          myScores.containsKey(t.id)
+              ? t.withMyScore(myScores[t.id]!)
+              : t,
+      ];
+
+  @override
+  Future<List<Question>> testQuestions(String testId) async => testQs[testId] ?? const [];
+
+  @override
+  Future<void> createTest(NewTest t) async {
+    final id = 'h${testsList.length + 1}';
+    testsList.insert(0, TestDefinition(id: id, title: t.title, durationMinutes: t.durationMinutes, marking: t.marking,
+        questionIds: t.questionIds, opensAt: t.opensAt, closesAt: t.closesAt));
+    testQs[id] = [for (final qid in t.questionIds) bank.firstWhere((q) => q.id == qid)];
+  }
+
+  @override
+  Future<void> deleteTest(String testId) async => testsList.removeWhere((t) => t.id == testId);
+
+  @override
+  Future<double> submitAttempt(String testId, Map<String, int> answers, {int focusLost = 0}) async {
+    if (failSubmit) {
+      throw const UnitDataFailure("Couldn't submit your answers. Check your connection and try again; your answers are kept.");
+    }
+    final t = testsList.firstWhere((t) => t.id == testId);
+    final score = scoreTest(questions: testQs[testId]!, answers: answers, marking: t.marking).score;
+    submissions.add((testId, answers));
+    myScores[testId] = score;
+    attemptsByTest.putIfAbsent(testId, () => []).add(
+        AttemptRecord(cadetId: 'u1', cadetName: 'Meera Nair', score: score, answers: answers, focusLost: focusLost));
+    return score;
+  }
+
+  @override
+  Future<Map<String, int?>> myAnswers(String testId) async => {
+        for (final a in attemptsByTest[testId] ?? const <AttemptRecord>[])
+          if (a.cadetId == 'u1') ...a.answers,
+      };
+
+  @override
+  Future<List<AttemptRecord>> testAttempts(String testId) async => attemptsByTest[testId] ?? const [];
+
+  @override
+  Future<List<ScoreRow>> unitScores() async => [
+        for (final e in attemptsByTest.entries)
+          for (final a in e.value) ScoreRow(testId: e.key, cadetId: a.cadetId, score: a.score),
+      ];
+
+  @override
+  Future<List<AppUser>> members() async => List.of(membersList);
+
+  @override
+  Future<void> updateMember(String id, {required AppRole role, String? rank}) async =>
+      memberUpdates.add((id, role, rank));
+
   @override
   Future<UstaadReply> askUstaad(String question) async {
     aiCalls++;
@@ -134,6 +203,12 @@ class LiveAuth implements AuthRepository {
   Future<AppUser?> signUp({required String email, required String password, required String fullName}) async => user;
   @override
   Future<AppUser> joinUnit(String code) async => user;
+  final profileSaves = <AppUser>[];
+  @override
+  Future<AppUser> updateProfile(AppUser updated) async {
+    profileSaves.add(updated);
+    return updated;
+  }
   @override
   Future<void> signOut() async {}
 }
@@ -331,7 +406,189 @@ void main() {
     expect(store.savedFigures, isEmpty);
   });
 
+  List<Question> wtBank(int n) => [
+        for (var i = 0; i < n; i++)
+          Question(id: 'b$i', subject: i.isEven ? 'Weapon Training' : 'Leadership', prompt: 'Question $i?',
+              options: const ['Alpha', 'Bravo', 'Charlie', 'Delta'], correctIndex: 0),
+      ];
+
+  testWidgets('ANO hosts a test from approved questions and sees it listed', (tester) async {
+    final repo = FakeUnitRepo()..bank.addAll(wtBank(30));
+    final (c, _) = await pumpLive(tester, ano, repo: repo, size: const Size(1280, 1000));
+    c.read(routerProvider).go(Routes.tests);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New test'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Test name'), 'Weekly test 1');
+    await tester.tap(find.text('Chosen subjects'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Weapon Training · 15'));
+    await tester.enterText(find.widgetWithText(TextField, 'Questions'), '10');
+    await tester.tap(find.text('Create test'));
+    await tester.pumpAndSettle();
+    final created = repo.testsList.single;
+    expect(created.title, 'Weekly test 1');
+    expect(created.questionIds, hasLength(10));
+    expect(repo.testQs['h1']!.every((q) => q.subject == 'Weapon Training'), isTrue);
+    expect(created.marking.wrong, 0.5); // B Cert negative marking by default
+    expect(created.closesAt, now.add(const Duration(days: 7)));
+    expect(find.text('Weekly test 1'), findsOneWidget);
+  });
+
+  Future<FakeUnitRepo> repoWithTest() async {
+    final repo = FakeUnitRepo()..bank.addAll(wtBank(4));
+    await repo.createTest(NewTest(title: 'Unit test 1', durationMinutes: 10, marking: const MarkingScheme(wrong: 0.5),
+        questionIds: const ['b0', 'b1', 'b2'], opensAt: now.subtract(const Duration(hours: 1)),
+        closesAt: now.add(const Duration(days: 2))));
+    return repo;
+  }
+
+  Future<void> answerAll(WidgetTester tester, List<String> picks) async {
+    for (final (i, pick) in picks.indexed) {
+      await tester.tap(find.text(pick));
+      await tester.pump();
+      await tester.tap(find.text(i == picks.length - 1 ? 'Submit test' : 'Next question'));
+      await tester.pumpAndSettle();
+    }
+  }
+
+  testWidgets('cadet takes a hosted test once; the server marks it and the key stays locked', (tester) async {
+    final repo = await repoWithTest();
+    final (c, _) = await pumpLive(tester, cadet, repo: repo);
+    await tester.tap(find.text('Learn'));
+    await tester.pumpAndSettle();
+    expect(c.read(testsProvider).single.title, 'Unit test 1');
+    c.read(routerProvider).push(Routes.quiz('h1'));
+    await tester.pumpAndSettle();
+    await answerAll(tester, ['Alpha', 'Bravo', 'Alpha']); // 2 right, 1 wrong: 2 + 2 - 0.5
+    expect(repo.submissions.single.$2.length, 3);
+    expect(find.text('3.5 / 6'), findsOneWidget);
+    expect(find.text('REVIEW ANSWERS'), findsNothing);
+    expect(find.textContaining('answer key unlocks'), findsOneWidget);
+    expect(c.read(testsProvider).single.myScore, 3.5);
+
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+    c.read(routerProvider).push(Routes.quiz('h1'));
+    await tester.pumpAndSettle();
+    expect(find.text('Submitted'), findsOneWidget); // no second attempt
+  });
+
+  testWidgets('a failed submission keeps the answers and can be sent again', (tester) async {
+    final repo = (await repoWithTest())..failSubmit = true;
+    final (c, _) = await pumpLive(tester, cadet, repo: repo);
+    await tester.tap(find.text('Learn'));
+    await tester.pumpAndSettle();
+    c.read(routerProvider).push(Routes.quiz('h1'));
+    await tester.pumpAndSettle();
+    await answerAll(tester, ['Alpha', 'Alpha', 'Alpha']);
+    expect(find.text('Not submitted yet'), findsOneWidget);
+    repo.failSubmit = false;
+    await tester.tap(find.text('Submit again'));
+    await tester.pumpAndSettle();
+    expect(find.text('6 / 6'), findsOneWidget);
+  });
+
+  testWidgets('after the test closes, the cadet can review their answers', (tester) async {
+    final repo = await repoWithTest();
+    await repo.submitAttempt('h1', {'b0': 0, 'b1': 2});
+    final closed = repo.testsList.single;
+    repo.testsList[0] = TestDefinition(id: closed.id, title: closed.title, durationMinutes: 10,
+        marking: closed.marking, questionIds: closed.questionIds, opensAt: closed.opensAt,
+        closesAt: now.subtract(const Duration(minutes: 1)));
+    final (c, _) = await pumpLive(tester, cadet, repo: repo, size: const Size(420, 2400));
+    await tester.tap(find.text('Learn'));
+    await tester.pumpAndSettle();
+    c.read(routerProvider).push(Routes.quiz('h1'));
+    await tester.pumpAndSettle();
+    expect(find.text('1.5 / 6'), findsOneWidget);
+    expect(find.text('REVIEW ANSWERS'), findsOneWidget);
+    expect(find.text('You chose: Charlie'), findsOneWidget);
+  });
+
+  testWidgets('ANO sees who submitted, scores and weak subjects', (tester) async {
+    final repo = await repoWithTest();
+    await repo.submitAttempt('h1', {'b0': 0, 'b1': 3, 'b2': 0});
+    final (c, _) = await pumpLive(tester, ano, repo: repo, size: const Size(1280, 2400));
+    c.read(routerProvider).push(Routes.testResults('h1'));
+    await tester.pumpAndSettle();
+    expect(find.text('1 / 1'), findsOneWidget); // submitted / cadets
+    expect(find.text('58%'), findsWidgets); // 3.5 of 6
+    expect(find.text('Meera Nair'), findsOneWidget);
+    expect(find.text('WEAK SUBJECTS ACROSS THE UNIT'), findsOneWidget);
+    expect(find.text('0% right'), findsOneWidget); // the Leadership question
+  });
+
+  testWidgets('ANO promotes a cadet to senior cadet from the roster', (tester) async {
+    final (c, repo) = await pumpLive(tester, ano, size: const Size(1280, 1000));
+    c.read(routerProvider).go(Routes.cadets);
+    await tester.pumpAndSettle();
+    expect(find.text('Sample roster'), findsNothing);
+    await tester.tap(find.text('Meera Nair'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('JUO'));
+    await tester.tap(find.text('Senior cadet'));
+    await tester.tap(find.text('Save changes'));
+    await tester.pumpAndSettle();
+    expect(repo.memberUpdates.single, ('u1', AppRole.seniorCadet, 'JUO'));
+    expect(find.text('JUO Meera Nair'), findsOneWidget);
+  });
+
+  testWidgets('cadet edits their own profile', (tester) async {
+    final auth = LiveAuth(cadet);
+    tester.view.physicalSize = const Size(420, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final c = ProviderContainer(overrides: [
+      authRepositoryProvider.overrideWithValue(auth),
+      initialUserProvider.overrideWithValue(cadet),
+      unitRepositoryFactoryProvider.overrideWithValue((_) => FakeUnitRepo()),
+      clockProvider.overrideWithValue(() => now),
+      precisPackStoreProvider.overrideWithValue(MemoryPrecisPackStore()),
+    ]);
+    addTearDown(c.dispose);
+    await tester.pumpWidget(UncontrolledProviderScope(container: c, child: const PhoenixApp()));
+    await tester.pumpAndSettle();
+    c.read(routerProvider).push(Routes.editProfile);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Regimental number'), 'ka2024sda0001');
+    await tester.tap(find.text('CPL'));
+    await tester.tap(find.text('2nd year'));
+    await tester.scrollUntilVisible(find.text('Save profile'), 200,
+        scrollable: find.descendant(of: find.byType(EditProfileScreen), matching: find.byType(Scrollable)).first);
+    await tester.tap(find.text('Save profile'));
+    await tester.pumpAndSettle();
+    final saved = auth.profileSaves.single;
+    expect(saved.regimentalNo, 'KA2024SDA0001');
+    expect(saved.rank, 'CPL');
+    expect(saved.trainingYear, 2);
+    expect(saved.role, AppRole.cadet);
+    expect(c.read(authControllerProvider)!.displayName, 'CPL Meera Nair');
+  });
+
   group('row mapping', () {
+    test('tests and attempts map from database rows', () {
+      final t = testFromRow({
+        'id': 't', 'title': 'Weekly', 'description': null, 'duration_minutes': 30, 'marks_correct': 2,
+        'marks_wrong': 0.5, 'opens_at': '2026-11-26T03:30:00Z', 'closes_at': null,
+        'test_questions': [{'question_id': 'q2', 'position': 1}, {'question_id': 'q1', 'position': 0}],
+        'test_attempts': [{'count': 12}],
+      }, myScore: 7);
+      expect(t.questionIds, ['q1', 'q2']);
+      expect(t.attemptCount, 12);
+      expect(t.maxScore, 4);
+      expect(t.marking.wrong, 0.5);
+      expect(t.attempted, isTrue);
+      final a = attemptFromRow({
+        'cadet_id': 'u', 'score': 3.5, 'submitted_at': '2026-11-26T04:00:00Z', 'focus_lost_count': 2,
+        'profiles': {'full_name': 'Meera Nair', 'rank': 'CDT'},
+        'attempt_answers': [{'question_id': 'q1', 'chosen_index': 2}, {'question_id': 'q2', 'chosen_index': null}],
+      });
+      expect(a.cadetName, 'CDT Meera Nair');
+      expect(a.answers, {'q1': 2, 'q2': null});
+      expect(a.focusLost, 2);
+    });
+
     test('diary entries round-trip through database rows', () {
       final e = DiaryEntry(
         id: 'd1',

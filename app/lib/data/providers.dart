@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../domain/diary_stats.dart';
 import '../domain/eligibility.dart';
+import '../domain/hosted_tests.dart';
 import 'auth_repository.dart';
 import 'demo/demo_data.dart';
 import 'models/comms.dart';
@@ -62,6 +63,10 @@ class AuthController extends Notifier<AppUser?> {
   }
 
   Future<void> joinUnit(String code) async => state = await _repo.joinUnit(code);
+
+  /// Sample users edit a local copy; live members save to the backend.
+  Future<void> updateProfile(AppUser updated) async =>
+      state = updated.isSample ? updated : await _repo.updateProfile(updated);
 
   Future<void> signOut() async {
     try {
@@ -236,18 +241,86 @@ class QuestionBankController extends LiveListController<Question> {
   Future<List<Question>> fetch(UnitRepository repo) => repo.approvedQuestions();
 }
 
-/// Tests hosted by the unit. Sample only for now; live hosted tests come next.
+/// Tests hosted by the unit: sample tests in sample mode, the unit's when live.
 final testsProvider = NotifierProvider<TestsController, List<TestDefinition>>(TestsController.new);
 
-class TestsController extends Notifier<List<TestDefinition>> {
+class TestsController extends LiveListController<TestDefinition> {
   @override
-  List<TestDefinition> build() =>
-      ref.watch(isLiveProvider) ? const [] : DemoData.tests(ref.read(clockProvider)());
+  List<TestDefinition> demo() => DemoData.tests(ref.read(clockProvider)());
 
-  void add(TestDefinition t) => state = [t, ...state];
+  @override
+  Future<List<TestDefinition>> fetch(UnitRepository repo) => repo.tests();
+
+  /// Hosts a test. Throws [UnitDataFailure] with a message to show.
+  Future<void> create(NewTest t) async {
+    final live = repo;
+    if (live == null) {
+      state = [
+        TestDefinition(
+          id: 't${DateTime.now().microsecondsSinceEpoch}',
+          title: t.title,
+          description: t.description,
+          durationMinutes: t.durationMinutes,
+          marking: t.marking,
+          questionIds: t.questionIds,
+          opensAt: t.opensAt,
+          closesAt: t.closesAt,
+        ),
+        ...state,
+      ];
+      return;
+    }
+    await live.createTest(t);
+    await reload(live);
+  }
+
+  Future<void> delete(String id) async {
+    await repo?.deleteTest(id);
+    state = [for (final t in state) if (t.id != id) t];
+  }
+
+  /// Records the cadet's score after they submit.
+  void markTaken(String id, double score) =>
+      state = [for (final t in state) t.id == id ? t.withMyScore(score) : t];
 }
 
-final rosterProvider = Provider<List<RosterCadet>>((ref) => DemoData.roster());
+/// Sample records with attendance and camp, used only in sample mode.
+final rosterProvider = Provider<List<RosterCadet>>(
+    (ref) => ref.watch(isLiveProvider) ? const [] : DemoData.roster());
+
+/// Everyone in the unit.
+final membersProvider = NotifierProvider<MembersController, List<AppUser>>(MembersController.new);
+
+class MembersController extends LiveListController<AppUser> {
+  @override
+  List<AppUser> demo() => [for (final r in DemoData.roster()) r.user];
+
+  @override
+  Future<List<AppUser>> fetch(UnitRepository repo) => repo.members();
+
+  /// ANO only. Sample mode changes the local list.
+  Future<void> updateMember(AppUser m, {required AppRole role, String? rank}) async {
+    await repo?.updateMember(m.id, role: role, rank: rank);
+    state = [
+      for (final u in state) u.id == m.id ? u.copyWith(role: role, rank: () => rank) : u,
+    ];
+  }
+}
+
+/// Every test score in the unit (admins see all, cadets their own).
+final unitScoresProvider = NotifierProvider<UnitScoresController, List<ScoreRow>>(UnitScoresController.new);
+
+class UnitScoresController extends LiveListController<ScoreRow> {
+  @override
+  List<ScoreRow> demo() => const [];
+
+  @override
+  Future<List<ScoreRow>> fetch(UnitRepository repo) => repo.unitScores();
+}
+
+/// Average test percentage per cadet id.
+final testAveragesProvider = Provider<Map<String, double>>(
+    (ref) => averagePercentByCadet(ref.watch(unitScoresProvider), ref.watch(testsProvider)));
 
 final documentsProvider =
     NotifierProvider<DocumentsController, List<KnowledgeDocument>>(DocumentsController.new);

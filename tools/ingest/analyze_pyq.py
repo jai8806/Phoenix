@@ -51,7 +51,7 @@ SUBJECTS = {
 EXAMS = {
     "bCertInsights": {
         "exam": "B Certificate",
-        "source": "B Cert paper 2024 and answer sheet 2025-26 · KAR & GOA Directorate · Army SD/SW",
+        "source": "B Cert papers 2024 and 2026 (Sets 1 and 2), answer sheet 2025-26 · KAR & GOA Directorate · Army SD/SW",
         "negative": 0.5, "negative_note": "−0.5 per wrong answer (2025-26 answer sheet)",
         "marks": [
             ("common", "Personality Development", 60, ""), ("common", "Social Service & Community Development", 32, ""),

@@ -176,3 +176,24 @@ duplicates. Army SD/SW: 256 figures; Common SD/SW: 615 (about 10 MB in all).
 They go to a private Supabase Storage bucket; the app shows them in the
 chapter reader and under Ustaad's answers for the pages it quotes, using
 short-lived signed links.
+
+## B Cert 2026 papers (Set 1 and Set 2, with keys)
+
+From the unit's compiled Drive folder (`B_Cert/02_PYQs/2026/`). Parse and
+write the load script with:
+
+```bash
+python3 tools/ingest/paper_2026.py content/sources/bcert2026
+```
+
+Each section is kept only when its questions line up with the key, and each
+answer is checked against the option text the key repeats. Parts of Set 1
+lost their question text (only answer letters remain), and Set 2's special
+subject pages are missing, so 163 of the 350 questions load. They load as
+**approved** shared questions because the answers come from the official key.
+
+## Study library
+
+The app's Learn tab links to the compiled Drive folder (all précis, past
+papers, question banks and notes). Change it at build time with
+`--dart-define=STUDY_LIBRARY_URL=...`.

@@ -4,6 +4,7 @@ import 'package:material_ui/material_ui.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/tokens.dart';
 import '../../data/models/roster.dart';
+import '../../data/models/user.dart';
 import '../../data/providers.dart';
 import '../shared/widgets.dart';
 
@@ -19,71 +20,194 @@ class _RosterScreenState extends ConsumerState<RosterScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final roster = ref.watch(rosterProvider);
+    final members = ref.watch(membersProvider);
+    final records = {for (final r in ref.watch(rosterProvider)) r.user.id: r};
+    final averages = ref.watch(testAveragesProvider);
+    final me = ref.watch(authControllerProvider);
+    final live = ref.watch(isLiveProvider);
     final q = _query.toLowerCase();
-    final shown = roster
-        .where((r) =>
+    final shown = members
+        .where((m) =>
             q.isEmpty ||
-            r.user.fullName.toLowerCase().contains(q) ||
-            (r.user.regimentalNo ?? '').toLowerCase().contains(q))
-        .toList();
+            m.fullName.toLowerCase().contains(q) ||
+            (m.regimentalNo ?? '').toLowerCase().contains(q) ||
+            (m.rank ?? '').toLowerCase().contains(q))
+        .toList()
+      ..sort((a, b) => a.role.index != b.role.index ? b.role.index - a.role.index : a.fullName.compareTo(b.fullName));
+    final t = Theme.of(context).textTheme;
+    final c = Theme.of(context).colorScheme;
 
     return PageBody(children: [
+      TextField(
+        onChanged: (v) => setState(() => _query = v),
+        decoration: const InputDecoration(
+          labelText: 'Search by name, rank or regimental number',
+          prefixIcon: Icon(Icons.search),
+        ),
+      ),
+      const SizedBox(height: Space.sm),
       Row(children: [
         Expanded(
-          child: TextField(
-            onChanged: (v) => setState(() => _query = v),
-            decoration: const InputDecoration(
-              labelText: 'Search by name or regimental number',
-              prefixIcon: Icon(Icons.search),
-            ),
+          child: Text(
+            '${members.length} member${members.length == 1 ? '' : 's'}'
+            '${me?.role.isAno == true ? ' · tap someone to change their rank or role' : ''}',
+            style: t.bodySmall?.copyWith(color: c.onSurfaceVariant),
           ),
         ),
-        const SizedBox(width: Space.md),
-        Tooltip(
-          message: 'CSV roster import arrives in Phase 1',
-          child: OutlinedButton.icon(onPressed: null, icon: const Icon(Icons.upload_file), label: const Text('Import CSV')),
-        ),
+        if (!live) const DemoBadge(text: 'Sample roster'),
       ]),
-      const SizedBox(height: Space.sm),
-      const Align(alignment: Alignment.centerLeft, child: DemoBadge(text: 'Sample roster · live roster and attendance come next')),
       const SizedBox(height: Space.lg),
-      if (shown.isEmpty)
+      if (members.isEmpty)
+        const EmptyState(
+          icon: Icons.group_add_outlined,
+          title: 'No one has joined yet',
+          message: 'Share your unit join code with cadets. They enter it after creating an account.',
+        )
+      else if (shown.isEmpty)
         EmptyState(
           icon: Icons.person_search_outlined,
-          title: 'No cadets match "$_query"',
+          title: 'No one matches "$_query"',
           message: 'Check the spelling, or search by regimental number.',
         )
       else
-        ListCard(children: [for (final r in shown) _CadetRow(r)]),
+        ListCard(children: [
+          for (final m in shown)
+            _MemberRow(
+              member: m,
+              record: records[m.id],
+              average: averages[m.id],
+              onTap: me?.role.isAno == true && m.id != me!.id && !m.role.isAno ? () => _edit(m) : null,
+            ),
+        ]),
     ]);
+  }
+
+  Future<void> _edit(AppUser m) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => _EditMemberSheet(member: m),
+    );
   }
 }
 
-class _CadetRow extends StatelessWidget {
-  const _CadetRow(this.record);
+class _MemberRow extends StatelessWidget {
+  const _MemberRow({required this.member, this.record, this.average, this.onTap});
 
-  final RosterCadet record;
+  final AppUser member;
+  final RosterCadet? record;
+  final double? average;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    final e = record.eligibility;
     final c = Theme.of(context).colorScheme;
-    final ok = e.isEligible;
+    final t = Theme.of(context).textTheme;
+    final e = record?.eligibility;
+    final initials = member.fullName.split(' ').where((p) => p.isNotEmpty).take(2).map((p) => p[0]).join();
     return ListTile(
-      title: Text(record.user.displayName),
-      subtitle: Text([
-        if (record.user.wing != null) record.user.wing!.label,
-        if (record.user.trainingYear != null) 'Year ${record.user.trainingYear}',
-        'Attendance ${(record.attendance * 100).round()}%',
-        if (record.mockAverage != null) 'Mocks ${record.mockAverage!.round()}%',
-      ].join(' · ')),
-      trailing: Chip(
-        avatar: Icon(ok ? Icons.check : Icons.schedule, size: 16,
-            color: ok ? context.status.success : context.status.warning),
-        label: Text(ok ? '${e.rule.certificate} eligible' : '${e.rule.certificate} pending'),
-        backgroundColor: c.surfaceContainerLow,
+      onTap: onTap,
+      leading: CircleAvatar(
+        backgroundColor: member.role == AppRole.cadet ? c.surfaceContainerHigh : c.primaryContainer,
+        child: Text(initials, style: t.labelLarge?.copyWith(
+            color: member.role == AppRole.cadet ? c.onSurfaceVariant : c.onPrimaryContainer)),
       ),
+      title: Text(member.displayName),
+      subtitle: Text([
+        if (member.role != AppRole.cadet) member.role.label,
+        if (member.regimentalNo != null) member.regimentalNo!,
+        if (member.trainingYear != null) 'Year ${member.trainingYear}',
+        if (average != null) 'Tests ${average!.round()}%',
+        if (record?.mockAverage != null && average == null) 'Mocks ${record!.mockAverage!.round()}%',
+      ].join(' · ')),
+      trailing: e != null
+          ? Chip(
+              avatar: Icon(e.isEligible ? Icons.check : Icons.schedule, size: 16,
+                  color: e.isEligible ? context.status.success : context.status.warning),
+              label: Text(e.isEligible ? '${e.rule.certificate} eligible' : '${e.rule.certificate} pending'),
+              backgroundColor: c.surfaceContainerLow,
+            )
+          : onTap == null
+              ? null
+              : const Icon(Icons.edit_outlined),
+    );
+  }
+}
+
+class _EditMemberSheet extends ConsumerStatefulWidget {
+  const _EditMemberSheet({required this.member});
+
+  final AppUser member;
+
+  @override
+  ConsumerState<_EditMemberSheet> createState() => _EditMemberSheetState();
+}
+
+class _EditMemberSheetState extends ConsumerState<_EditMemberSheet> {
+  late AppRole _role = widget.member.role;
+  late String? _rank = widget.member.rank;
+  bool _saving = false;
+  String? _error;
+
+  Future<void> _save() async {
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await ref.read(membersProvider.notifier).updateMember(widget.member, role: _role, rank: _rank);
+      if (mounted) Navigator.of(context).pop();
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _saving = false;
+          _error = '$e';
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    final c = Theme.of(context).colorScheme;
+    final ranks = {...cadetRanks, if (widget.member.rank != null) widget.member.rank!}.toList();
+    return Padding(
+      padding: EdgeInsets.fromLTRB(Space.xl, 0, Space.xl, Space.xl + MediaQuery.viewInsetsOf(context).bottom),
+      child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(widget.member.fullName, style: t.titleLarge),
+        const SizedBox(height: Space.lg),
+        Text('Rank', style: t.labelLarge),
+        const SizedBox(height: Space.sm),
+        Wrap(spacing: Space.sm, runSpacing: Space.sm, children: [
+          for (final r in ranks)
+            ChoiceChip(label: Text(r), selected: _rank == r, onSelected: (_) => setState(() => _rank = r)),
+        ]),
+        const SizedBox(height: Space.lg),
+        Text('Role', style: t.labelLarge),
+        const SizedBox(height: Space.sm),
+        SegmentedButton<AppRole>(
+          segments: const [
+            ButtonSegment(value: AppRole.cadet, label: Text('Cadet')),
+            ButtonSegment(value: AppRole.seniorCadet, label: Text('Senior cadet')),
+          ],
+          selected: {_role},
+          onSelectionChanged: (s) => setState(() => _role = s.first),
+        ),
+        const SizedBox(height: Space.sm),
+        Text('Senior cadets can open the Command Center: post notices, add events, review questions and host tests.',
+            style: t.bodySmall?.copyWith(color: c.onSurfaceVariant)),
+        if (_error != null) ...[
+          const SizedBox(height: Space.md),
+          Text(_error!, style: t.bodyMedium?.copyWith(color: c.error)),
+        ],
+        const SizedBox(height: Space.xl),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton(onPressed: _saving ? null : _save, child: Text(_saving ? 'Saving…' : 'Save changes')),
+        ),
+      ]),
     );
   }
 }

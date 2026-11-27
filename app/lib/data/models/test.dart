@@ -62,6 +62,10 @@ class TestDefinition {
     required this.marking,
     required this.questionIds,
     this.opensAt,
+    this.closesAt,
+    this.description,
+    this.myScore,
+    this.attemptCount = 0,
   });
 
   final String id;
@@ -70,6 +74,87 @@ class TestDefinition {
   final MarkingScheme marking;
   final List<String> questionIds;
   final DateTime? opensAt;
+  final DateTime? closesAt;
+  final String? description;
+
+  /// The signed-in cadet's score, once they have taken the test.
+  final double? myScore;
+
+  /// Attempts the signed-in member can see: their own, or the whole unit's for admins.
+  final int attemptCount;
+
+  bool get attempted => myScore != null;
+  double get maxScore => questionIds.length * marking.correct;
+
+  bool hasOpened(DateTime now) => opensAt == null || !opensAt!.isAfter(now);
+  bool hasClosed(DateTime now) => closesAt != null && !closesAt!.isAfter(now);
+  bool isOpen(DateTime now) => hasOpened(now) && !hasClosed(now);
+
+  TestDefinition withMyScore(double score) => TestDefinition(
+        id: id,
+        title: title,
+        durationMinutes: durationMinutes,
+        marking: marking,
+        questionIds: questionIds,
+        opensAt: opensAt,
+        closesAt: closesAt,
+        description: description,
+        myScore: score,
+        attemptCount: attemptCount + 1,
+      );
+}
+
+/// What an admin fills in to host a test.
+class NewTest {
+  const NewTest({
+    required this.title,
+    required this.durationMinutes,
+    required this.marking,
+    required this.questionIds,
+    this.description,
+    this.opensAt,
+    this.closesAt,
+  });
+
+  final String title;
+  final String? description;
+  final int durationMinutes;
+  final MarkingScheme marking;
+  final List<String> questionIds;
+  final DateTime? opensAt;
+  final DateTime? closesAt;
+}
+
+/// One cadet's submitted attempt, as the ANO sees it.
+class AttemptRecord {
+  const AttemptRecord({
+    required this.cadetId,
+    required this.cadetName,
+    required this.score,
+    required this.answers,
+    this.submittedAt,
+    this.focusLost = 0,
+  });
+
+  final String cadetId;
+  final String cadetName;
+  final double score;
+
+  /// Question id -> chosen option (null when skipped).
+  final Map<String, int?> answers;
+  final DateTime? submittedAt;
+
+  /// Times the cadet left the app during the test.
+  final int focusLost;
+}
+
+/// A score with the test it belongs to, for unit-wide averages.
+class ScoreRow {
+  const ScoreRow({required this.testId, required this.cadetId, required this.score});
+
+  final String testId;
+  final String cadetId;
+  final double score;
 }
 
 class SubjectScore {

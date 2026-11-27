@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../core/theme/app_theme.dart';
@@ -22,9 +23,9 @@ class QuizScreen extends ConsumerStatefulWidget {
   ConsumerState<QuizScreen> createState() => _QuizScreenState();
 }
 
-class _QuizScreenState extends ConsumerState<QuizScreen> {
+class _QuizScreenState extends ConsumerState<QuizScreen> with WidgetsBindingObserver {
   late final String _title;
-  late final List<Question> _questions;
+  List<Question> _questions = const [];
   late final MarkingScheme _marking;
   late final Duration _limit;
   final Map<String, int> _answers = {};
@@ -33,9 +34,21 @@ class _QuizScreenState extends ConsumerState<QuizScreen> {
   Timer? _timer;
   Duration _elapsed = Duration.zero;
 
+  /// Set for a test hosted by the unit on the backend: marked on the server.
+  TestDefinition? _hosted;
+  bool _loading = false;
+  String? _blocked; // why the test can't be taken right now
+  String? _loadError;
+  bool _submitting = false;
+  String? _submitError;
+  double? _serverScore;
+  int _focusLost = 0;
+  bool _reviewOnly = false;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     final bank = ref.read(questionBankProvider);
     final rng = Random();
     TestDefinition? def;
@@ -43,11 +56,16 @@ class _QuizScreenState extends ConsumerState<QuizScreen> {
       if (t.id == widget.testId) def = t;
     }
     if (def != null) {
-      final ids = def.questionIds.toSet();
       _title = def.title;
-      _questions = bank.where((q) => ids.contains(q.id)).toList()..shuffle(rng);
       _marking = def.marking;
       _limit = Duration(minutes: def.durationMinutes);
+      if (ref.read(unitRepositoryProvider) != null) {
+        _hosted = def;
+        _openHosted(def);
+        return;
+      }
+      final ids = def.questionIds.toSet();
+      _questions = bank.where((q) => ids.contains(q.id)).toList()..shuffle(rng);
     } else if (widget.testId == 'mock') {
       // Full mock in the exam pattern: each subject gets its share of questions.
       final insights = insightsFor(ref.read(certTrackProvider));
@@ -75,22 +93,107 @@ class _QuizScreenState extends ConsumerState<QuizScreen> {
       _marking = const MarkingScheme();
       _limit = Duration(minutes: count);
     }
+    _startTimer();
+  }
+
+  /// A unit test: take it if it is open, or review it once it has closed.
+  Future<void> _openHosted(TestDefinition def) async {
+    final now = ref.read(clockProvider)();
+    final fmt = DateFormat('EEE d MMM, h:mm a');
+    if (def.attempted && !def.hasClosed(now)) {
+      _blocked = 'You scored ${_fmtScore(def.myScore!)} / ${_fmtScore(def.maxScore)}. '
+          '${def.closesAt == null ? 'The answer key unlocks when your ANO closes the test.' : 'The answer key unlocks when the test closes on ${fmt.format(def.closesAt!)}.'}';
+      return;
+    }
+    if (!def.attempted && !def.hasOpened(now)) {
+      _blocked = 'This test opens on ${fmt.format(def.opensAt!)}.';
+      return;
+    }
+    if (!def.attempted && def.hasClosed(now)) {
+      _blocked = 'This test closed on ${fmt.format(def.closesAt!)} before you took it.';
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _loadError = null;
+    });
+    try {
+      final repo = ref.read(unitRepositoryProvider)!;
+      final questions = await repo.testQuestions(def.id);
+      final mine = def.attempted ? await repo.myAnswers(def.id) : const <String, int?>{};
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _questions = def.attempted ? questions : (List.of(questions)..shuffle());
+        if (def.attempted) {
+          _reviewOnly = true;
+          _serverScore = def.myScore;
+          for (final e in mine.entries) {
+            if (e.value != null) _answers[e.key] = e.value!;
+          }
+          _result = scoreTest(questions: _questions, answers: _answers, marking: _marking);
+        }
+      });
+      if (!def.attempted) _startTimer();
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _loadError = '$e';
+        });
+      }
+    }
+  }
+
+  void _startTimer() {
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!mounted || _result != null) return;
+      if (!mounted || _result != null || _submitting) return;
       setState(() => _elapsed += const Duration(seconds: 1));
       if (_elapsed >= _limit) _submit();
     });
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (_hosted != null && _result == null && !_reviewOnly && state == AppLifecycleState.paused) _focusLost++;
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     super.dispose();
   }
 
-  void _submit() {
+  Future<void> _submit() async {
     _timer?.cancel();
-    setState(() => _result = scoreTest(questions: _questions, answers: _answers, marking: _marking));
+    final local = scoreTest(questions: _questions, answers: _answers, marking: _marking);
+    final hosted = _hosted;
+    if (hosted == null) return setState(() => _result = local);
+
+    setState(() {
+      _submitting = true;
+      _submitError = null;
+    });
+    try {
+      final score = await ref
+          .read(unitRepositoryProvider)!
+          .submitAttempt(hosted.id, Map.of(_answers), focusLost: _focusLost);
+      if (!mounted) return;
+      ref.read(testsProvider.notifier).markTaken(hosted.id, score);
+      setState(() {
+        _submitting = false;
+        _serverScore = score;
+        _result = local;
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _submitting = false;
+          _submitError = '$e';
+        });
+      }
+    }
   }
 
   Future<void> _confirmSubmit() async {
@@ -112,6 +215,39 @@ class _QuizScreenState extends ConsumerState<QuizScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_blocked != null) {
+      return Scaffold(
+        appBar: AppBar(title: Text(_title)),
+        body: EmptyState(
+          icon: _hosted?.attempted == true ? Icons.task_alt : Icons.lock_clock_outlined,
+          title: _hosted?.attempted == true ? 'Submitted' : 'Not available',
+          message: _blocked!,
+        ),
+      );
+    }
+    if (_loading) {
+      return Scaffold(appBar: AppBar(title: Text(_title)), body: const Center(child: CircularProgressIndicator()));
+    }
+    if (_loadError != null) {
+      return Scaffold(
+        appBar: AppBar(title: Text(_title)),
+        body: PageBody(children: [
+          EmptyState(icon: Icons.cloud_off, title: "Couldn't open the test", message: _loadError!),
+          Center(child: FilledButton(onPressed: () => _openHosted(_hosted!), child: const Text('Try again'))),
+        ]),
+      );
+    }
+    if (_submitting || _submitError != null) {
+      return Scaffold(
+        appBar: AppBar(title: Text(_title), automaticallyImplyLeading: false),
+        body: _submitting
+            ? const Center(child: CircularProgressIndicator())
+            : PageBody(children: [
+                EmptyState(icon: Icons.cloud_off, title: 'Not submitted yet', message: _submitError!),
+                Center(child: FilledButton(onPressed: _submit, child: const Text('Submit again'))),
+              ]),
+      );
+    }
     if (_questions.isEmpty) {
       return Scaffold(
         appBar: AppBar(title: Text(_title)),
@@ -119,7 +255,21 @@ class _QuizScreenState extends ConsumerState<QuizScreen> {
             message: 'Your ANO approves précis questions in the Command Center; they will appear here for practice.'),
       );
     }
-    if (_result != null) return _ResultView(title: _title, result: _result!, questions: _questions, answers: _answers);
+    if (_result != null) {
+      final now = ref.read(clockProvider)();
+      final keyLocked = _hosted != null && !_hosted!.hasClosed(now);
+      return _ResultView(
+        title: _title,
+        result: _result!,
+        questions: _questions,
+        answers: _answers,
+        score: _serverScore,
+        showAnswers: !keyLocked,
+        note: keyLocked
+            ? 'Submitted and marked. The answer key unlocks when the test closes, so it can\'t be passed around.'
+            : null,
+      );
+    }
 
     final q = _questions[_index];
     final remaining = _limit - _elapsed;
@@ -190,12 +340,25 @@ class _QuizScreenState extends ConsumerState<QuizScreen> {
 }
 
 class _ResultView extends StatelessWidget {
-  const _ResultView({required this.title, required this.result, required this.questions, required this.answers});
+  const _ResultView({
+    required this.title,
+    required this.result,
+    required this.questions,
+    required this.answers,
+    this.score,
+    this.showAnswers = true,
+    this.note,
+  });
 
   final String title;
   final TestResult result;
   final List<Question> questions;
   final Map<String, int> answers;
+
+  /// The score the server gave, for hosted tests.
+  final double? score;
+  final bool showAnswers;
+  final String? note;
 
   @override
   Widget build(BuildContext context) {
@@ -206,7 +369,7 @@ class _ResultView extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: Text('$title · Result')),
       body: PageBody(children: [
-        Text('${n(result.score)} / ${n(result.maxScore)}', style: t.displaySmall),
+        Text('${n(score ?? result.score)} / ${n(result.maxScore)}', style: t.displaySmall),
         Text('${result.percentage.round()}% · ${result.correct} right · ${result.wrong} wrong · ${result.skipped} skipped',
             style: t.bodyMedium?.copyWith(color: c.onSurfaceVariant)),
         if (result.weakSubjects.isNotEmpty) ...[
@@ -216,8 +379,14 @@ class _ResultView extends StatelessWidget {
               Chip(label: Text('${s.subject} · ${(s.accuracy * 100).round()}%')),
           ]),
         ],
-        const SectionHeader('Review answers'),
-        for (final q in questions) _ReviewCard(question: q, chosen: answers[q.id]),
+        if (note != null) ...[
+          const SizedBox(height: Space.lg),
+          Card(child: ListTile(leading: const Icon(Icons.lock_outline), title: Text(note!))),
+        ],
+        if (showAnswers) ...[
+          const SectionHeader('Review answers'),
+          for (final q in questions) _ReviewCard(question: q, chosen: answers[q.id]),
+        ],
         const SizedBox(height: Space.lg),
         FilledButton(onPressed: () => context.pop(), child: const Text('Done')),
       ]),
@@ -269,3 +438,5 @@ class _ReviewCard extends StatelessWidget {
     );
   }
 }
+
+String _fmtScore(double v) => v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAsFixed(1);

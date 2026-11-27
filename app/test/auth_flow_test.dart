@@ -48,6 +48,9 @@ class FakeBackend implements AuthRepository {
   }
 
   @override
+  Future<AppUser> updateProfile(AppUser updated) async => _user = updated;
+
+  @override
   Future<void> signOut() async => _user = null;
 }
 

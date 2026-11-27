@@ -42,8 +42,15 @@ class ProfileScreen extends ConsumerWidget {
             ]),
           ),
         ]),
+        const SizedBox(height: Space.lg),
+        OutlinedButton.icon(
+          onPressed: () => context.push(Routes.editProfile),
+          icon: const Icon(Icons.edit_outlined),
+          label: const Text('Edit profile'),
+        ),
         const SectionHeader('Service record'),
         ListCard(children: [
+          ListTile(title: const Text('Rank'), trailing: Text(user.rank ?? '—')),
           ListTile(title: const Text('Regimental number'), trailing: Text(user.regimentalNo ?? '—')),
           ListTile(title: const Text('Unit'), trailing: Text(user.unitName ?? '—')),
           ListTile(title: const Text('Training year'), trailing: Text(user.trainingYear?.toString() ?? '—')),

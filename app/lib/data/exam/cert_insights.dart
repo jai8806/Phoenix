@@ -5,7 +5,7 @@ import 'insights.dart';
 
 const bCertInsights = ExamInsights(
   exam: 'B Certificate',
-  source: 'B Cert paper 2024 and answer sheet 2025-26 · KAR & GOA Directorate · Army SD/SW',
+  source: 'B Cert papers 2024 and 2026 (Sets 1 and 2), answer sheet 2025-26 · KAR & GOA Directorate · Army SD/SW',
   totalMarks: 350,
   questionCount: 175,
   durationMinutes: 180,

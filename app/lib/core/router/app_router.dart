@@ -9,6 +9,7 @@ import '../../features/auth/sign_in_screen.dart';
 import '../../features/cadet/cadet_shell.dart';
 import '../../features/cadet/diary_entry_screen.dart';
 import '../../features/cadet/diary_screen.dart';
+import '../../features/cadet/edit_profile_screen.dart';
 import '../../features/cadet/learn_screen.dart';
 import '../../features/cadet/profile_screen.dart';
 import '../../features/cadet/quiz_screen.dart';
@@ -20,6 +21,7 @@ import '../../features/command/knowledge_screen.dart';
 import '../../features/command/overview_screen.dart';
 import '../../features/command/review_screen.dart';
 import '../../features/command/roster_screen.dart';
+import '../../features/command/test_results_screen.dart';
 import '../../features/command/tests_screen.dart';
 import '../../features/shared/announcements_screen.dart';
 import '../../features/shared/calendar_screen.dart';
@@ -37,6 +39,7 @@ abstract final class Routes {
   static const announcements = '/announcements';
   static String quiz(String testId) => '/quiz/${Uri.encodeComponent(testId)}';
   static const plan = '/study-plan';
+  static const editProfile = '/profile/edit';
   static String subject(String name) => '/subject?name=${Uri.encodeQueryComponent(name)}';
   static String chapter(String code) => '/chapter?code=${Uri.encodeQueryComponent(code)}';
 
@@ -47,6 +50,7 @@ abstract final class Routes {
   static const commandAnnouncements = '/command/announcements';
   static const knowledge = '/command/knowledge';
   static const review = '/command-review';
+  static String testResults(String id) => '/command-results/${Uri.encodeComponent(id)}';
 
   static String home(AppUser user) => user.role.canAdminister ? overview : today;
 }
@@ -100,7 +104,12 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(path: Routes.newDiaryEntry, builder: (_, _) => const DiaryEntryScreen()),
       GoRoute(path: Routes.review, builder: (_, _) => const ReviewScreen()),
+      GoRoute(
+        path: '/command-results/:id',
+        builder: (_, s) => TestResultsScreen(testId: Uri.decodeComponent(s.pathParameters['id']!)),
+      ),
       GoRoute(path: Routes.plan, builder: (_, _) => const StudyPlanScreen()),
+      GoRoute(path: Routes.editProfile, builder: (_, _) => const EditProfileScreen()),
       GoRoute(path: '/subject', builder: (_, s) => SubjectScreen(name: s.uri.queryParameters['name'] ?? '')),
       GoRoute(path: '/chapter', builder: (_, s) => ChapterScreen(code: s.uri.queryParameters['code'] ?? '')),
       GoRoute(path: Routes.calendar, builder: (_, _) => const CalendarScreen(editable: false)),

@@ -36,6 +36,33 @@ abstract interface class UnitRepository {
 
   /// Short-lived links to figure files, keyed by storage path.
   Future<Map<String, String>> figureUrls(List<String> paths);
+
+  // Hosted tests ------------------------------------------------------------
+
+  /// The unit's tests, newest first, with the member's own score on each.
+  Future<List<TestDefinition>> tests();
+  Future<List<Question>> testQuestions(String testId);
+  Future<void> createTest(NewTest test);
+  Future<void> deleteTest(String testId);
+
+  /// Marked on the server; returns the score. A cadet can submit once.
+  Future<double> submitAttempt(String testId, Map<String, int> answers, {int focusLost = 0});
+
+  /// The member's own answers to a test they took.
+  Future<Map<String, int?>> myAnswers(String testId);
+
+  /// Every attempt at a test (admins).
+  Future<List<AttemptRecord>> testAttempts(String testId);
+
+  /// Every score in the unit (admins), for averages.
+  Future<List<ScoreRow>> unitScores();
+
+  // Roster ------------------------------------------------------------------
+
+  Future<List<AppUser>> members();
+
+  /// ANO only: change a member's role or rank.
+  Future<void> updateMember(String id, {required AppRole role, String? rank});
 }
 
 /// Thrown with a message that is safe to show.
@@ -231,6 +258,141 @@ class SupabaseUnitRepository implements UnitRepository {
       }, 'load the figures');
 
   @override
+  Future<List<TestDefinition>> tests() => _guard(() async {
+        final rows = await _client
+            .from('tests')
+            .select('id, title, description, duration_minutes, marks_correct, marks_wrong, opens_at, closes_at, '
+                'test_questions(question_id, position), test_attempts(count)')
+            .order('created_at', ascending: false)
+            .limit(200);
+        final mine = await _client.from('test_attempts').select('test_id, score').eq('cadet_id', _user.id);
+        final scores = {for (final r in mine) r['test_id'] as String: (r['score'] as num?)?.toDouble() ?? 0};
+        return [for (final r in rows) testFromRow(r, myScore: scores[r['id']])];
+      }, 'load tests');
+
+  @override
+  Future<List<Question>> testQuestions(String testId) => _guard(() async {
+        final rows = await _client
+            .from('test_questions')
+            .select('position, questions(id, subject, prompt, options, correct_index, explanation)')
+            .eq('test_id', testId)
+            .order('position');
+        return [
+          for (final r in rows)
+            if (r['questions'] != null) questionFromRow(r['questions'] as Map<String, dynamic>),
+        ];
+      }, 'load the test');
+
+  @override
+  Future<void> createTest(NewTest t) => _guard(() async {
+        final row = await _client
+            .from('tests')
+            .insert({
+              'unit_id': _unitId,
+              'title': t.title,
+              'description': t.description,
+              'duration_minutes': t.durationMinutes,
+              'marks_correct': t.marking.correct,
+              'marks_wrong': t.marking.wrong,
+              'opens_at': t.opensAt?.toUtc().toIso8601String(),
+              'closes_at': t.closesAt?.toUtc().toIso8601String(),
+              'created_by': _user.id,
+            })
+            .select('id')
+            .single();
+        final id = row['id'] as String;
+        try {
+          await _client.from('test_questions').insert([
+            for (var i = 0; i < t.questionIds.length; i++) {'test_id': id, 'question_id': t.questionIds[i], 'position': i},
+          ]);
+        } catch (_) {
+          await _client.from('tests').delete().eq('id', id);
+          rethrow;
+        }
+      }, 'create the test');
+
+  @override
+  Future<void> deleteTest(String testId) => _guard(() async {
+        await _client.from('tests').delete().eq('id', testId);
+      }, 'delete the test');
+
+  @override
+  Future<double> submitAttempt(String testId, Map<String, int> answers, {int focusLost = 0}) async {
+    try {
+      final score = await _client.rpc('submit_attempt', params: {
+        'tid': testId,
+        'answers': answers,
+        'focus_lost': focusLost,
+      });
+      return (score as num).toDouble();
+    } on PostgrestException catch (e) {
+      // The function's own messages are written for cadets.
+      const known = ['already taken', 'has closed', 'not opened', 'not found'];
+      throw UnitDataFailure(known.any(e.message.contains)
+          ? '${e.message}.'
+          : "Couldn't submit your answers. Check your connection and try again; your answers are kept.");
+    } catch (_) {
+      throw const UnitDataFailure(
+          "Couldn't submit your answers. Check your connection and try again; your answers are kept.");
+    }
+  }
+
+  @override
+  Future<Map<String, int?>> myAnswers(String testId) => _guard(() async {
+        final rows = await _client
+            .from('test_attempts')
+            .select('attempt_answers(question_id, chosen_index)')
+            .eq('test_id', testId)
+            .eq('cadet_id', _user.id);
+        if (rows.isEmpty) return const {};
+        return answersFromRows(rows.first['attempt_answers'] as List? ?? const []);
+      }, 'load your answers');
+
+  @override
+  Future<List<AttemptRecord>> testAttempts(String testId) => _guard(() async {
+        final rows = await _client
+            .from('test_attempts')
+            .select('cadet_id, score, submitted_at, focus_lost_count, profiles(full_name, rank), '
+                'attempt_answers(question_id, chosen_index)')
+            .eq('test_id', testId);
+        return [for (final r in rows) attemptFromRow(r)];
+      }, 'load the results');
+
+  @override
+  Future<List<ScoreRow>> unitScores() => _guard(() async {
+        final rows = await _client.from('test_attempts').select('test_id, cadet_id, score').limit(5000);
+        return [
+          for (final r in rows)
+            ScoreRow(
+              testId: r['test_id'] as String,
+              cadetId: r['cadet_id'] as String,
+              score: (r['score'] as num?)?.toDouble() ?? 0,
+            ),
+        ];
+      }, 'load scores');
+
+  @override
+  Future<List<AppUser>> members() => _guard(() async {
+        final rows = await _client
+            .from('profiles')
+            .select('id, full_name, role, rank, regimental_no, wing, division, training_year, unit_id')
+            .eq('unit_id', _unitId)
+            .order('full_name');
+        return [for (final r in rows) appUserFromRow(r)];
+      }, 'load the roster');
+
+  @override
+  Future<void> updateMember(String id, {required AppRole role, String? rank}) => _guard(() async {
+        final rows = await _client
+            .from('profiles')
+            .update({'role': roleToDb(role), 'rank': rank})
+            .eq('id', id)
+            .select('id');
+        // Row-level security turns a forbidden update into "no rows changed".
+        if (rows.isEmpty) throw const UnitDataFailure('Only the ANO can change roles and ranks.');
+      }, 'update the cadet');
+
+  @override
   Future<UstaadReply> askUstaad(String question) async {
     try {
       final res = await _client.functions.invoke('ustaad', body: {'question': question});
@@ -357,6 +519,43 @@ ReviewItem reviewItemFromRow(Map<String, dynamic> r) => ReviewItem(
       source: [r['subject'], r['explanation']].whereType<String>().join(' · '),
       page: (r['source_page'] as num?)?.toInt(),
     );
+
+TestDefinition testFromRow(Map<String, dynamic> r, {double? myScore}) {
+  final tq = [for (final q in r['test_questions'] as List? ?? const []) q as Map<String, dynamic>]
+    ..sort((a, b) => ((a['position'] as num?) ?? 0).compareTo((b['position'] as num?) ?? 0));
+  final counts = r['test_attempts'] as List?;
+  return TestDefinition(
+    id: r['id'] as String,
+    title: r['title'] as String,
+    description: r['description'] as String?,
+    durationMinutes: (r['duration_minutes'] as num).toInt(),
+    marking: MarkingScheme(
+      correct: (r['marks_correct'] as num?)?.toDouble() ?? 2,
+      wrong: (r['marks_wrong'] as num?)?.toDouble() ?? 0,
+    ),
+    questionIds: [for (final q in tq) q['question_id'] as String],
+    opensAt: r['opens_at'] == null ? null : _time(r['opens_at']),
+    closesAt: r['closes_at'] == null ? null : _time(r['closes_at']),
+    myScore: myScore,
+    attemptCount: counts == null || counts.isEmpty ? 0 : ((counts.first as Map)['count'] as num?)?.toInt() ?? 0,
+  );
+}
+
+Map<String, int?> answersFromRows(List rows) => {
+      for (final a in rows) (a as Map)['question_id'] as String: (a['chosen_index'] as num?)?.toInt(),
+    };
+
+AttemptRecord attemptFromRow(Map<String, dynamic> r) {
+  final p = r['profiles'] as Map<String, dynamic>?;
+  return AttemptRecord(
+    cadetId: r['cadet_id'] as String,
+    cadetName: p == null ? 'Cadet' : [if (p['rank'] != null) p['rank'], p['full_name']].join(' '),
+    score: (r['score'] as num?)?.toDouble() ?? 0,
+    submittedAt: r['submitted_at'] == null ? null : _time(r['submitted_at']),
+    focusLost: (r['focus_lost_count'] as num?)?.toInt() ?? 0,
+    answers: answersFromRows(r['attempt_answers'] as List? ?? const []),
+  );
+}
 
 /// Précis questions store their chapter in `explanation` ("AF I · Q3"); show the chapter as the subject.
 String _subjectLabel(String? subject, String? explanation) {

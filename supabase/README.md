@@ -27,6 +27,16 @@ ever has to leave the dashboard.
 6. **Question review and Ustaad tables:** run
    `migrations/20261126010000_review_and_ustaad.sql`.
 
+## Hosted tests and roles
+
+Run `migrations/20261127010000_hosted_tests.sql`. It adds `submit_attempt()`,
+which marks a cadet's answers on the server and allows one attempt per test,
+and makes attempts read-only for cadets so a score can't be edited from the
+phone. The ANO and senior cadets create tests from approved questions in the
+Command Center; the ANO changes ranks and roles from the Cadets tab.
+
+Check it locally: `psql -d phoenix_check -f migrations/20261127010000_hosted_tests.sql -f tests/hosted_tests_check.sql`.
+
 ## Précis figures
 
 1. Run `migrations/20261127000000_figures.sql` (creates the `figures` table

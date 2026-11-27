@@ -2,7 +2,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/config/env.dart';
 import '../../core/router/app_router.dart';
 import '../../core/theme/tokens.dart';
 import '../../data/exam/exam_data.dart';
@@ -76,7 +78,7 @@ class _LearnScreenState extends ConsumerState<LearnScreen> {
               const SizedBox(height: Space.sm),
               Text(
                 'Tap a subject for its most-asked chapters. Based on ${insights.questionsAnalysed} questions '
-                'from the question banks and the 2024 paper.',
+                'from the question banks and the 2024 paper; the 2026 papers use the same marks per subject.',
                 style: t.bodySmall?.copyWith(color: c.onSurfaceVariant),
               ),
             ]),
@@ -130,9 +132,10 @@ class _LearnScreenState extends ConsumerState<LearnScreen> {
               message: 'Tests your ANO or senior cadets host will appear here. Meanwhile, use Quick practice.')
         else
           ListCard(children: [
-            for (final test in tests)
-              _TestTile(test: test, isOpen: test.opensAt == null || !test.opensAt!.isAfter(now)),
+            for (final test in tests) _TestTile(test: test, now: now),
           ]),
+        const SectionHeader('Study library'),
+        const StudyLibraryCard(),
         SectionHeader('Study material · ${wing.label}'),
         SegmentedButton<SyllabusLevel>(
           segments: [for (final l in SyllabusLevel.values) ButtonSegment(value: l, label: Text(l.label))],
@@ -194,25 +197,53 @@ class _ExamHero extends StatelessWidget {
 }
 
 class _TestTile extends StatelessWidget {
-  const _TestTile({required this.test, required this.isOpen});
+  const _TestTile({required this.test, required this.now});
 
   final TestDefinition test;
-  final bool isOpen;
+  final DateTime now;
 
   @override
   Widget build(BuildContext context) {
     final m = test.marking;
-    final neg = m.wrong == 0 ? 'no negative marking' : '−${_fmt(m.wrong)} per wrong answer';
+    final neg = m.wrong == 0 ? 'no negative marking' : '−${_fmt(m.wrong)} per wrong';
+    final d = DateFormat('EEE d MMM, h:mm a');
+    final c = Theme.of(context).colorScheme;
+    void go() => context.push(Routes.quiz(test.id));
+
+    if (test.attempted) {
+      final closed = test.hasClosed(now);
+      return ListTile(
+        leading: const Icon(Icons.task_alt),
+        title: Text(test.title),
+        subtitle: Text('Scored ${_fmt(test.myScore!)} / ${_fmt(test.maxScore)} · '
+            '${closed ? 'answer key open' : 'answer key after it closes'}'),
+        trailing: closed ? const Icon(Icons.chevron_right) : null,
+        onTap: go,
+      );
+    }
+    if (!test.hasOpened(now)) {
+      return ListTile(
+        leading: const Icon(Icons.lock_clock_outlined),
+        title: Text(test.title),
+        subtitle: Text('Opens ${d.format(test.opensAt!)}'),
+      );
+    }
+    if (test.hasClosed(now)) {
+      return ListTile(
+        leading: Icon(Icons.event_busy_outlined, color: c.onSurfaceVariant),
+        title: Text(test.title),
+        subtitle: const Text('Closed · missed'),
+      );
+    }
     return ListTile(
+      leading: const Icon(Icons.assignment_outlined),
       title: Text(test.title),
-      subtitle: Text(
-        isOpen
-            ? '${test.questionIds.length} Q · ${test.durationMinutes} min · $neg'
-            : 'Opens ${DateFormat('EEE d MMM, h:mm a').format(test.opensAt!)}',
-      ),
-      trailing: isOpen
-          ? FilledButton.tonal(onPressed: () => context.push(Routes.quiz(test.id)), child: const Text('Start'))
-          : const Icon(Icons.lock_clock_outlined),
+      subtitle: Text([
+        '${test.questionIds.length} Q · ${test.durationMinutes} min · $neg',
+        if (test.closesAt != null) 'closes ${d.format(test.closesAt!)}',
+        'one attempt',
+      ].join(' · ')),
+      trailing: FilledButton.tonal(onPressed: go, child: const Text('Start')),
     );
   }
 }
@@ -284,6 +315,67 @@ class _GroupTile extends StatelessWidget {
                 : null,
           ),
       ],
+    );
+  }
+}
+
+/// Opens the unit's Drive folder with every précis, past paper, question bank and note.
+class StudyLibraryCard extends StatelessWidget {
+  const StudyLibraryCard({super.key});
+
+  static const _sections = [
+    (Icons.menu_book_outlined, 'Précis 2025', 'Army, Tech Skills, NB & CP, Life Skills'),
+    (Icons.history_edu_outlined, 'Past papers', 'B Cert 2024, 2026 (with keys) · C Cert 2024-25'),
+    (Icons.quiz_outlined, 'Question banks', 'Common, Army special, OMR book'),
+    (Icons.sticky_note_2_outlined, 'Notes', 'First aid, health, map reading, weapon training'),
+  ];
+
+  Future<void> _open(BuildContext context) async {
+    final ok = await launchUrl(Uri.parse(Env.studyLibraryUrl), mode: LaunchMode.externalApplication);
+    if (!ok && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Couldn't open the library. Check that a browser or Google Drive is installed.")));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    final c = Theme.of(context).colorScheme;
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => _open(context),
+        child: Padding(
+          padding: const EdgeInsets.all(Space.lg),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Icon(Icons.folder_shared_outlined, color: c.primary),
+              const SizedBox(width: Space.sm),
+              Expanded(child: Text('NCC B & C Cert library', style: t.titleMedium)),
+              Icon(Icons.open_in_new, size: 18, color: c.onSurfaceVariant),
+            ]),
+            const SizedBox(height: Space.xs),
+            Text('Every précis, past paper, question bank and set of notes, in Google Drive.',
+                style: t.bodySmall?.copyWith(color: c.onSurfaceVariant)),
+            const SizedBox(height: Space.md),
+            for (final (icon, title, detail) in _sections)
+              Padding(
+                padding: const EdgeInsets.only(bottom: Space.xs),
+                child: Row(children: [
+                  Icon(icon, size: 18, color: c.onSurfaceVariant),
+                  const SizedBox(width: Space.sm),
+                  Text(title, style: t.labelLarge),
+                  const SizedBox(width: Space.sm),
+                  Expanded(
+                    child: Text(detail, style: t.bodySmall?.copyWith(color: c.onSurfaceVariant),
+                        overflow: TextOverflow.ellipsis),
+                  ),
+                ]),
+              ),
+          ]),
+        ),
+      ),
     );
   }
 }
