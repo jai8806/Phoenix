@@ -472,6 +472,8 @@ final _boilerplate = RegExp(
 
 /// Sentences and list items, short ones included (for showing context).
 List<String> splitUnits(String text) => text
+    // Wingdings bullets from the PDFs come through as private-use characters.
+    .replaceAll(RegExp(r'[\uE000-\uF8FF]'), ' • ')
     .replaceAll(_boilerplate, ' ')
     .replaceAll(RegExp(r'\s{2,}'), ' ')
     .split(RegExp(r'(?<=[.!?])\s+(?=[A-Z(0-9•➢])|\s(?=\([a-z]{1,3}\)\s)|\s(?=\([ivx]{1,4}\)\s)|\s(?=\d{1,2}\.\s)|\s(?=[•➢▪●]\s?)|(?<=:-)\s+'))

@@ -579,9 +579,11 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Armed Forces Revised'));
     await tester.pumpAndSettle();
-    expect(find.textContaining('Commands of the Army'), findsOneWidget);
-    expect(find.textContaining('responsibility for national defence'), findsNothing);
-    expect(find.text('FIGURES (1)'), findsOneWidget);
+    expect(find.textContaining('Commands of the Army', findRichText: true), findsWidgets);
+    expect(find.textContaining('responsibility for national defence', findRichText: true), findsNothing);
+    expect(find.bySemanticsLabel('Figure from AF I, page 4'), findsOneWidget); // inline, in its section
+    expect(find.text('IN 30 SECONDS'), findsOneWidget);
+    expect(find.text('Mark as studied'), findsOneWidget);
   });
 
   testWidgets('quick facts answer what the précis gets wrong, with when they were checked', (tester) async {

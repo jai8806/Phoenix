@@ -520,6 +520,23 @@ class ExamDateController extends Notifier<DateTime?> {
 }
 
 /// Plan items ticked off, keyed "yyyy-mm-dd|item".
+/// Chapters the cadet has marked as studied ("book|code"), kept on the phone.
+final studiedChaptersProvider = NotifierProvider<StudiedChaptersController, Set<String>>(StudiedChaptersController.new);
+
+class StudiedChaptersController extends Notifier<Set<String>> {
+  static const _key = 'chapters_studied';
+
+  @override
+  Set<String> build() => (ref.read(sharedPreferencesProvider)?.getStringList(_key) ?? const []).toSet();
+
+  void toggle(String id) {
+    final next = {...state};
+    if (!next.remove(id)) next.add(id);
+    state = next;
+    ref.read(sharedPreferencesProvider)?.setStringList(_key, next.toList());
+  }
+}
+
 final planProgressProvider = NotifierProvider<PlanProgressController, Set<String>>(PlanProgressController.new);
 
 class PlanProgressController extends Notifier<Set<String>> {

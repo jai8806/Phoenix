@@ -72,8 +72,11 @@ List<AnswerBlock> parseAnswer(String text) {
       out.add(AnswerBlock(rest, marker: '(${m.group(1)})'));
     } else {
       // "Title:" on its own line reads as a small heading.
-      final t = line.trim();
-      out.add(AnswerBlock(t.replaceAll(RegExp(r'^\*\*(.+)\*\*:?$'), r'$1'), heading: RegExp(r'^\*\*.+\*\*:?$').hasMatch(t)));
+      final t = line.trim().replaceAll(RegExp(r'[\uE000-\uF8FF]'), '•');
+      final whole = RegExp(r'^\*\*(.+)\*\*:?$').firstMatch(t);
+      out.add(whole != null && !whole.group(1)!.contains('**')
+          ? AnswerBlock(whole.group(1)!, heading: true)
+          : AnswerBlock(t));
     }
   }
   return out;

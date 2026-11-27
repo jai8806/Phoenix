@@ -6,3 +6,4 @@ content/build/
 
 __pycache__/
 .pytest_cache/
+test/preview/*.png

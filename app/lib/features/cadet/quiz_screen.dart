@@ -78,6 +78,13 @@ class _QuizScreenState extends ConsumerState<QuizScreen> with WidgetsBindingObse
       _questions = picked;
       _marking = MarkingScheme(correct: 2, wrong: insights.negativeMarks);
       _limit = Duration(minutes: (insights.durationMinutes * picked.length / insights.questionCount).ceil().clamp(1, 600));
+    } else if (widget.testId.startsWith('chapter:')) {
+      final code = widget.testId.substring('chapter:'.length);
+      final pool = bank.where((q) => q.subject == code).toList()..shuffle(rng);
+      _title = '$code practice';
+      _questions = pool.take(15).toList();
+      _marking = const MarkingScheme();
+      _limit = Duration(minutes: _questions.length.clamp(1, 15));
     } else if (widget.testId.startsWith('subject:')) {
       final name = widget.testId.substring('subject:'.length);
       final s = subjectNamed(insightsFor(ref.read(certTrackProvider)), name);

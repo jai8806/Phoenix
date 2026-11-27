@@ -12,6 +12,9 @@ import '../../data/providers.dart';
 import '../../domain/precis_search.dart';
 import '../../domain/study_plan.dart';
 import '../shared/figures.dart';
+import '../../domain/study_format.dart';
+import '../../data/models/figure.dart';
+import '../shared/rich_answer.dart';
 import '../shared/widgets.dart';
 
 IconData subjectIcon(String name) {
@@ -254,36 +257,174 @@ class ChapterScreen extends ConsumerWidget {
       return Scaffold(appBar: AppBar(title: Text(code)), body: PageBody(children: [body]));
     }
 
-    String? lastSection;
+    final bookTitle = passages.first.title;
+    final figures = precis.figuresFor(code, book: bookTitle);
+    final sections = <(String, List<PrecisPassage>)>[];
+    for (final p in passages) {
+      final name = p.heading.split(' · ').last;
+      if (sections.isEmpty || sections.last.$1 != name) sections.add((name, []));
+      sections.last.$2.add(p);
+    }
+    bool isRecap(String name) => RegExp(r'summary|conclusion', caseSensitive: false).hasMatch(name);
+    final reading = [for (final s in sections) if (!isRecap(s.$1)) s];
+    final points = keyPoints(passages);
+    final placed = <String>{};
+    List<PrecisFigure> figuresIn(List<PrecisPassage> ps) {
+      final from = ps.map((p) => p.page ?? 0).reduce((a, b) => a < b ? a : b);
+      final to = ps.map((p) => p.pageEnd ?? p.page ?? 0).reduce((a, b) => a > b ? a : b);
+      return [
+        for (final f in figures)
+          if (f.page != null && f.page! >= from && f.page! <= to && placed.add(f.id)) f,
+      ];
+    }
+    final keys = [for (final _ in reading) GlobalKey()];
+    final questions = ref.watch(questionBankProvider).where((q) => q.subject == code).length;
+    final studiedId = '$bookTitle|$code';
+    final studied = ref.watch(studiedChaptersProvider).contains(studiedId);
+    final accents = [c.primary, c.tertiary, c.secondary];
+
     return Scaffold(
       appBar: AppBar(title: Text(code)),
       body: PageBody(children: [
+        // Header
+        Wrap(spacing: Space.sm, runSpacing: Space.xs, crossAxisAlignment: WrapCrossAlignment.center, children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: Space.sm, vertical: 2),
+            decoration: BoxDecoration(color: c.primaryContainer, borderRadius: BorderRadius.circular(Radii.sm)),
+            child: Text(code, style: t.labelLarge?.copyWith(color: c.onPrimaryContainer)),
+          ),
+          if (studied) Icon(Icons.check_circle, size: 18, color: context.status.success),
+        ]),
+        const SizedBox(height: Space.sm),
         Text(title, style: t.headlineSmall),
         const SizedBox(height: Space.xs),
-        Text('${passages.first.title} · p. ${passages.first.page ?? '–'}–${passages.last.pageEnd ?? passages.last.page ?? '–'}',
-            style: t.bodySmall?.copyWith(color: c.onSurfaceVariant)),
-        if (precis.figuresFor(code, book: passages.first.title).isNotEmpty) ...[
-          SectionHeader('Figures (${precis.figuresFor(code, book: passages.first.title).length})'),
-          FigureStrip(figures: precis.figuresFor(code, book: passages.first.title)),
-        ],
-        const SizedBox(height: Space.lg),
-        for (final p in passages) ...[
-          if (p.heading.split(' · ').last != lastSection) ...[
-            Padding(
-              padding: const EdgeInsets.only(top: Space.lg, bottom: Space.sm),
-              child: Text((lastSection = p.heading.split(' · ').last), style: t.titleMedium),
+        Text(
+          [
+            bookTitle,
+            'p. ${passages.first.page ?? '–'}–${passages.last.pageEnd ?? passages.last.page ?? '–'}',
+            '${readMinutes(passages)} min read',
+            if (figures.isNotEmpty) '${figures.length} figure${figures.length == 1 ? '' : 's'}',
+          ].join(' · '),
+          style: t.bodySmall?.copyWith(color: c.onSurfaceVariant),
+        ),
+        // In 30 seconds
+        if (points.isNotEmpty) ...[
+          const SizedBox(height: Space.lg),
+          Container(
+            padding: const EdgeInsets.all(Space.lg),
+            decoration: BoxDecoration(
+              color: c.tertiaryContainer.withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(Radii.lg),
             ),
-          ],
-          SelectableText(p.content, style: t.bodyLarge?.copyWith(height: 1.55)),
-          Padding(
-            padding: const EdgeInsets.only(top: Space.xs, bottom: Space.md),
-            child: Text('p. ${p.pages}', style: t.labelSmall?.copyWith(color: c.onSurfaceVariant)),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                Icon(Icons.bolt, size: 18, color: c.tertiary),
+                const SizedBox(width: Space.xs),
+                Text('IN 30 SECONDS', style: t.labelMedium?.copyWith(color: c.tertiary, letterSpacing: 1.1)),
+              ]),
+              const SizedBox(height: Space.sm),
+              RichAnswer([for (final p in points) '- $p'].join('\n'), style: t.bodyMedium),
+            ]),
           ),
         ],
+        // Jump to a section
+        if (reading.length > 1) ...[
+          const SizedBox(height: Space.lg),
+          SizedBox(
+            height: 36,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: reading.length,
+              separatorBuilder: (_, _) => const SizedBox(width: Space.sm),
+              itemBuilder: (context, i) => ActionChip(
+                label: Text(_shortSection(reading[i].$1)),
+                onPressed: () {
+                  final ctx = keys[i].currentContext;
+                  if (ctx != null) Scrollable.ensureVisible(ctx, duration: const Duration(milliseconds: 300));
+                },
+              ),
+            ),
+          ),
+        ],
+        // Sections
+        for (final (i, (name, ps)) in reading.indexed) ...[
+          const SizedBox(height: Space.lg),
+          Card(
+            key: keys[i],
+            clipBehavior: Clip.antiAlias,
+            child: Container(
+              decoration: BoxDecoration(border: Border(left: BorderSide(color: accents[i % accents.length], width: 4))),
+              padding: const EdgeInsets.all(Space.lg),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  CircleAvatar(
+                    radius: 13,
+                    backgroundColor: accents[i % accents.length].withValues(alpha: 0.15),
+                    child: Text('${i + 1}', style: t.labelMedium?.copyWith(color: accents[i % accents.length])),
+                  ),
+                  const SizedBox(width: Space.sm),
+                  Expanded(child: Text(_shortSection(name), style: t.titleMedium)),
+                ]),
+                const SizedBox(height: Space.md),
+                for (final p in ps) ...[
+                  RichAnswer(formatForStudy(p.content), style: t.bodyLarge?.copyWith(height: 1.5)),
+                  const SizedBox(height: Space.sm),
+                ],
+                Builder(builder: (_) {
+                  final figs = figuresIn(ps);
+                  if (figs.isEmpty) return const SizedBox.shrink();
+                  return Padding(
+                    padding: const EdgeInsets.only(top: Space.sm),
+                    child: FigureStrip(figures: figs, height: 170),
+                  );
+                }),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Text('p. ${ps.first.page ?? '–'}${ps.last.pageEnd != null || ps.last.page != ps.first.page ? '–${ps.last.pageEnd ?? ps.last.page}' : ''}',
+                      style: t.labelSmall?.copyWith(color: c.onSurfaceVariant)),
+                ),
+              ]),
+            ),
+          ),
+        ],
+        // Figures not tied to a section's pages
+        Builder(builder: (_) {
+          final rest = [for (final f in figures) if (!placed.contains(f.id)) f];
+          if (rest.isEmpty) return const SizedBox.shrink();
+          return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            SectionHeader('More figures (${rest.length})'),
+            FigureStrip(figures: rest, height: 150),
+          ]);
+        }),
+        // Test yourself
+        const SectionHeader('Test yourself'),
+        Card(
+          child: Column(children: [
+            ListTile(
+              leading: const Icon(Icons.quiz_outlined),
+              title: Text(questions == 0 ? 'No questions for $code yet' : 'Practise $questions question${questions == 1 ? '' : 's'} from $code'),
+              subtitle: Text(questions == 0
+                  ? 'Your ANO approves this chapter\'s questions in the review queue.'
+                  : 'Quick, untimed check of what you just read.'),
+              trailing: questions == 0 ? null : const Icon(Icons.play_arrow),
+              onTap: questions == 0 ? null : () => context.push(Routes.quiz('chapter:$code')),
+            ),
+            SwitchListTile(
+              secondary: Icon(studied ? Icons.check_circle : Icons.radio_button_unchecked,
+                  color: studied ? context.status.success : null),
+              title: const Text('Mark as studied'),
+              value: studied,
+              onChanged: (_) => ref.read(studiedChaptersProvider.notifier).toggle(studiedId),
+            ),
+          ]),
+        ),
       ]),
     );
   }
 }
+
+/// "Part II: Types of North and Bearings" -> "Types of North and Bearings".
+String _shortSection(String s) => s.replaceFirst(RegExp(r'^Part\s+[IVX\d]+\s*[:\-–]\s*', caseSensitive: false), '');
 
 // ---------------------------------------------------------------------------
 // Study plan
