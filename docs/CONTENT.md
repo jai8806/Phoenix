@@ -25,7 +25,16 @@ public, so:
 | Special Subject (Army) SD/SW | `sdsw` | 6 units, 40 chapters | 319 passages |
 | Common Subject SD/SW | `sdsw` | 11 units, 103 chapters | 959 passages |
 
-**1,575 passages and 232 draft MCQs in all.** The SD/SW books are an older
+| MCQ Bank · Special Subject (Army) | `mcq_bank.py` | 6 subjects | 682 draft MCQs |
+| MCQ Bank · Common Subject | `mcq_bank.py` | 14 subjects | 904 draft MCQs |
+| B Cert Paper 2024 · KAR & GOA (Army SD/SW) | `mcq_bank.py --kind paper` | 95 of 175 questions readable in the scan | 95 draft MCQs |
+| First Aid Lecture (H-5) | `--layout slides` | 147 slides | 59 passages |
+
+**1,634 passages and 1,913 draft MCQs in all.** None of the question banks
+include answer keys, so every question waits in the ANO's review queue.
+Suggesting answers by matching options against the précis was tried and was
+right only about half the time on a hand-checked sample, so no answer is
+guessed. The SD/SW books are an older
 edition (statistics up to about 2017) with no MCQs, only written
 comprehension questions, and no period counts. The JD/JW book is the 2025
 edition.
@@ -68,6 +77,11 @@ python3 tools/ingest/to_sql.py content/build/army_jd_jw_2025_part1 content/build
 # 4. Regenerate the app's subject list from the index
 python3 tools/ingest/export_syllabus.py content/build/army_jd_jw_2025_part1/index.json \
     --name armyJunior --out app/lib/data/syllabus/army_junior.dart
+
+# Question banks and past papers (no answer keys: questions arrive as drafts)
+python3 tools/ingest/mcq_bank.py content/sources/qb_common.pdf --title "MCQ Bank · Common Subject" \
+    --wing common --level senior
+python3 tools/ingest/to_sql.py content/build/qb_common --out content/build/qb_common.sql
 
 # Tests (synthetic text only)
 python3 -m pytest tools/ingest/tests

@@ -58,9 +58,10 @@ def build_parts(volumes: list[tuple[dict, list[dict], list[dict]]], max_bytes: i
              f"delete from questions where unit_id is null and subject = {q(title)} and status = 'draft';"]
     for src in sources:
         setup.append(f"delete from documents where unit_id is null and storage_path = {q('precis/' + src)};")
-    for src in sources:
-        setup.append("insert into documents (unit_id, title, subject, wing, division_level, storage_path) "
-                     f"values (null, {q(title)}, null, {wing}, {q(doc0['level'])}, {q('precis/' + src)});")
+    for (index, passages, _), src in zip(volumes, sources):
+        if passages:  # question banks have no passages and need no document row
+            setup.append("insert into documents (unit_id, title, subject, wing, division_level, storage_path) "
+                         f"values (null, {q(title)}, null, {wing}, {q(doc0['level'])}, {q('precis/' + src)});")
     statements: list[str] = ["\n".join(setup)]
 
     def batches(rows: list[str], head: str, tail: str) -> None:
@@ -95,7 +96,7 @@ def build_parts(volumes: list[tuple[dict, list[dict], list[dict]]], max_bytes: i
 
     questions = [item for _, _, qs in volumes for item in qs]
     batches(
-        [f"  (null, {q(title)}, {wing}, {q(item['prompt'])}, {q_array(item['options'])}, null, "
+        [f"  (null, {q(title)}, {wing}, {q(item['prompt'])}, {q_array(item['options'])}, {q(item.get('correct_index'))}, "
          f"{q(item['chapter_code'] + ' · Q' + str(item['number']))}, 'draft', {q(item['book_page'])})"
          for item in questions],
         "insert into questions (unit_id, subject, wing, prompt, options, correct_index, explanation, "

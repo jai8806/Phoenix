@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -32,6 +33,7 @@ from precis import (  # noqa: E402
     parse_master_index,
     parse_mcqs,
     split_chapters,
+    smart_title,
     split_sdsw,
     to_page,
 )
@@ -48,8 +50,11 @@ def main() -> None:
     ap.add_argument("--index-from", type=Path,
                     help="index.json from another volume of the same book, for volumes without a master index")
     ap.add_argument("--continues", help='chapter code this volume opens in the middle of, e.g. "AF IV"')
-    ap.add_argument("--layout", choices=["jdjw", "sdsw"], default="jdjw",
-                    help="jdjw: 2025 JD/JW format (master index, MCQs); sdsw: SD/SW unit format (no MCQs)")
+    ap.add_argument("--layout", choices=["jdjw", "sdsw", "slides"], default="jdjw",
+                    help="jdjw: 2025 JD/JW format (master index, MCQs); sdsw: SD/SW unit format (no MCQs); "
+                         "slides: a lecture deck, one passage per slide title")
+    ap.add_argument("--code", default="", help="slides: lesson code, e.g. H-5")
+    ap.add_argument("--chapter", default="", help="slides: lesson title, e.g. Basics of First Aid")
     args = ap.parse_args()
 
     with pdfplumber.open(args.pdf) as pdf:
@@ -58,6 +63,8 @@ def main() -> None:
 
     if args.layout == "sdsw":
         return write_sdsw(args, pages)
+    if args.layout == "slides":
+        return write_slides(args, pages)
 
     index_text = "\n".join(p.text for p in pages if "MASTER INDEX" in p.text or p.text.startswith("SER CODE"))
     index = parse_master_index(index_text)
@@ -94,6 +101,38 @@ def main() -> None:
           f"{n_passages} passages, {n_questions} draft MCQs -> {out}")
     for ch in chapters:
         print(f"  {ch.code}: {ch.title} (pdf pages {ch.pages[0].pdf_page}-{ch.pages[-1].pdf_page})")
+
+
+def write_slides(args, pages) -> None:
+    """A slide deck: consecutive slides with the same title form one passage."""
+    doc = {"title": args.title, "wing": args.wing, "level": args.level, "edition": args.edition,
+           "source_file": args.pdf.name}
+    groups: list[dict] = []
+    for page in pages:
+        clean = re.sub(r"[\ue000-\uf8ff•▪►✓]", " ", page.text)  # PowerPoint bullet glyphs
+        lines = [l.strip(" -–") for l in clean.splitlines() if l.strip(" -–")]
+        if len(lines) < 2:
+            continue
+        title, body = lines[0], " ".join(lines[1:])
+        if len(body) < 40:
+            continue
+        if groups and groups[-1]["section"].lower() == title.lower() and len(groups[-1]["text"]) < 1400:
+            groups[-1]["text"] += " " + body
+            groups[-1]["book_pages"].append(page.pdf_page)
+        else:
+            groups.append({"section": title, "text": body, "book_pages": [page.pdf_page]})
+    out = args.out / args.pdf.stem
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "index.json").write_text(json.dumps({"document": doc, "groups": {}, "subjects": []}, indent=2))
+    with (out / "passages.jsonl").open("w") as fp:
+        for g in groups:
+            fp.write(json.dumps({**doc, "chapter_code": args.code, "chapter_title": args.chapter,
+                                 "section": smart_title(g["section"]), "book_pages": g["book_pages"],
+                                 "text": " ".join(g["text"].split()),
+                                 "citation": f"{args.title} · {args.code} · {smart_title(g['section'])} · slide {g['book_pages'][0]}"},
+                                ensure_ascii=False) + "\n")
+    (out / "questions.jsonl").write_text("")
+    print(f"{args.pdf.name}: {len(groups)} passages from {len(pages)} slides -> {out}")
 
 
 def write_sdsw(args, pages) -> None:
