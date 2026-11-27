@@ -11,6 +11,7 @@ import '../../data/exam/insights.dart';
 import '../../data/providers.dart';
 import '../../domain/precis_search.dart';
 import '../../domain/study_plan.dart';
+import '../shared/figures.dart';
 import '../shared/widgets.dart';
 
 IconData subjectIcon(String name) {
@@ -251,6 +252,10 @@ class ChapterScreen extends ConsumerWidget {
         const SizedBox(height: Space.xs),
         Text('${passages.first.title} · p. ${passages.first.page ?? '–'}–${passages.last.pageEnd ?? passages.last.page ?? '–'}',
             style: t.bodySmall?.copyWith(color: c.onSurfaceVariant)),
+        if (precis.figuresFor(code).isNotEmpty) ...[
+          SectionHeader('Figures (${precis.figuresFor(code).length})'),
+          FigureStrip(figures: precis.figuresFor(code)),
+        ],
         const SizedBox(height: Space.lg),
         for (final p in passages) ...[
           if (p.heading.split(' · ').last != lastSection) ...[

@@ -6,6 +6,7 @@ import 'package:phoenix/core/router/app_router.dart';
 import 'package:phoenix/data/auth_repository.dart';
 import 'package:phoenix/data/models/comms.dart';
 import 'package:phoenix/data/models/diary.dart';
+import 'package:phoenix/data/models/figure.dart';
 import 'package:phoenix/data/models/test.dart';
 import 'package:phoenix/data/models/user.dart';
 import 'package:phoenix/data/models/ustaad.dart';
@@ -42,6 +43,21 @@ class FakeUnitRepo implements UnitRepository {
         content: 'There are three types of north. (a) True north points to the geographic pole. '
             '(b) Magnetic north is shown by the compass needle. (c) Grid north follows the grid lines.'),
   ];
+
+  static const demoFigures = [
+    PrecisFigure(id: 'f1', title: 'Demo Army Book', chapterCode: 'AF I', page: 2, path: 'demo/f1.webp', width: 400, height: 300),
+    PrecisFigure(id: 'f2', title: 'Demo Map Book', chapterCode: 'MR III', page: 185, path: 'demo/f2.webp', width: 300, height: 300),
+  ];
+  final urlRequests = <String>[];
+
+  @override
+  Future<List<PrecisFigure>> figures() async => demoFigures;
+
+  @override
+  Future<Map<String, String>> figureUrls(List<String> paths) async {
+    urlRequests.addAll(paths);
+    return const {}; // no network in tests: placeholders are shown
+  }
 
   @override
   Future<List<PrecisPassage>> precisPassages() async {
@@ -292,15 +308,27 @@ void main() {
     expect(c.read(routerProvider).state.matchedLocation, Routes.today);
   });
 
+  testWidgets('Ustaad shows figures from the pages it quotes, and asks for their links', (tester) async {
+    final (c, repo) = await pumpLive(tester, cadet);
+    await tester.tap(find.text('Ustaad'));
+    await tester.pumpAndSettle();
+    await ask(tester, 'what is magnetic north');
+    expect(find.bySemanticsLabel('Figure from MR III, page 185'), findsOneWidget);
+    expect(repo.urlRequests, contains('demo/f2.webp'));
+    expect(c.read(precisProvider).figures, hasLength(2));
+  });
+
   testWidgets('signing out deletes the précis saved on the phone', (tester) async {
     final store = MemoryPrecisPackStore();
     final (c, _) = await pumpLive(tester, cadet, store: store);
     await tester.tap(find.text('Ustaad'));
     await tester.pumpAndSettle();
     expect(store.saved, isNotEmpty);
+    expect(store.savedFigures, isNotEmpty);
     await c.read(authControllerProvider.notifier).signOut();
     await tester.pumpAndSettle();
     expect(store.saved, isNull);
+    expect(store.savedFigures, isEmpty);
   });
 
   group('row mapping', () {

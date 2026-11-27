@@ -2,10 +2,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../core/theme/tokens.dart';
+import '../../data/models/figure.dart';
 import '../../data/models/ustaad.dart';
 import '../../data/providers.dart';
 import '../../data/unit_repository.dart';
 import '../../domain/precis_search.dart';
+import '../shared/figures.dart';
 
 class _Message {
   const _Message(this.text,
@@ -187,8 +189,11 @@ class _UstaadScreenState extends ConsumerState<UstaadScreen> {
                         if (i == _messages.length) return const _Thinking();
                         final m = _messages[i];
                         if (m.precis != null) {
+                          final top = m.precis!.passages.first;
                           return _PrecisBubble(
                             answer: m.precis!,
+                            figures: precis.figuresFor(top.heading.split(' · ').first,
+                                fromPage: top.page, toPage: top.pageEnd ?? top.page),
                             onExplain: ref.watch(isLiveProvider) && !_thinking ? () => _explain(m.question!) : null,
                           );
                         }
@@ -228,9 +233,10 @@ class _UstaadScreenState extends ConsumerState<UstaadScreen> {
 
 /// Lines quoted from the précis, the full passage on demand, and "Explain simply".
 class _PrecisBubble extends StatefulWidget {
-  const _PrecisBubble({required this.answer, required this.onExplain});
+  const _PrecisBubble({required this.answer, required this.onExplain, this.figures = const []});
 
   final PrecisAnswer answer;
+  final List<PrecisFigure> figures;
   final VoidCallback? onExplain;
 
   @override
@@ -269,6 +275,11 @@ class _PrecisBubbleState extends State<_PrecisBubble> {
               padding: const EdgeInsets.only(top: 2, bottom: Space.sm),
               child: Text(s.passage.citation, style: t.bodySmall?.copyWith(color: c.onSurfaceVariant)),
             ),
+          ],
+          if (widget.figures.isNotEmpty) ...[
+            const SizedBox(height: Space.xs),
+            FigureStrip(figures: widget.figures.take(4).toList(), height: 96),
+            const SizedBox(height: Space.sm),
           ],
           if (_expanded) ...[
             const Divider(),

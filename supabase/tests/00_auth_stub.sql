@@ -7,3 +7,9 @@ create schema auth;
 create table auth.users (id uuid primary key, email text, raw_user_meta_data jsonb default '{}');
 create function auth.uid() returns uuid language sql stable as
   $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
+
+-- Minimal stand-in for Supabase Storage.
+create schema if not exists storage;
+create table if not exists storage.buckets (id text primary key, name text, public boolean default false);
+create table if not exists storage.objects (id uuid primary key default gen_random_uuid(), bucket_id text, name text);
+alter table storage.objects enable row level security;

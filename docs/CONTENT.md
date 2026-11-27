@@ -166,3 +166,13 @@ topics (Health & Hygiene 28, Obstacle Training 14). Its negative marking is
 not printed, so −0.5 is assumed and labelled as such in the app.
 
 Only numbers and chapter titles go into the app.
+
+## Figures
+
+`tools/ingest/figures.py` crops every embedded image larger than an icon from
+the rendered page (130 dpi, WebP, at most 900 px wide), tags it with the
+chapter and printed page, and drops logos repeated on many pages and
+duplicates. Army SD/SW: 256 figures; Common SD/SW: 615 (about 10 MB in all).
+They go to a private Supabase Storage bucket; the app shows them in the
+chapter reader and under Ustaad's answers for the pages it quotes, using
+short-lived signed links.

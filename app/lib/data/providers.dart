@@ -12,6 +12,7 @@ import 'models/roster.dart';
 import 'models/test.dart';
 import 'models/user.dart';
 import 'exam/exam_data.dart';
+import 'models/figure.dart';
 import 'precis_pack.dart';
 import 'unit_repository.dart';
 import '../domain/precis_search.dart';
@@ -306,10 +307,20 @@ final precisPackStoreProvider = Provider<PrecisPackStore>((ref) => MemoryPrecisP
 enum PrecisStatus { sample, loading, ready, error }
 
 class PrecisState {
-  const PrecisState(this.status, {this.search, this.error, this.refreshing = false});
+  const PrecisState(this.status, {this.search, this.error, this.refreshing = false, this.figures = const []});
 
   final PrecisStatus status;
   final PrecisSearch? search;
+
+  /// Figures from the précis, by chapter and page.
+  final List<PrecisFigure> figures;
+
+  List<PrecisFigure> figuresFor(String chapterCode, {int? fromPage, int? toPage}) => [
+        for (final f in figures)
+          if (f.chapterCode == chapterCode &&
+              (fromPage == null || (f.page != null && f.page! >= fromPage && f.page! <= (toPage ?? fromPage))))
+            f,
+      ];
   final String? error;
 
   /// A newer copy is downloading while the saved one is in use.
@@ -332,10 +343,12 @@ class PrecisController extends Notifier<PrecisState> {
   }
 
   Future<void> _start(UnitRepository repo) async {
-    final saved = await ref.read(precisPackStoreProvider).load();
+    final store = ref.read(precisPackStoreProvider);
+    final saved = await store.load();
+    final savedFigures = await store.loadFigures();
     if (!ref.mounted) return;
     if (saved != null && saved.isNotEmpty) {
-      state = PrecisState(PrecisStatus.ready, search: PrecisSearch(saved), refreshing: true);
+      state = PrecisState(PrecisStatus.ready, search: PrecisSearch(saved), refreshing: true, figures: savedFigures);
     }
     await refresh(repo);
   }
@@ -345,19 +358,28 @@ class PrecisController extends Notifier<PrecisState> {
     if (repo == null) return;
     try {
       final passages = await repo.precisPassages();
+      // Figures are optional: the précis still works if they can't load.
+      List<PrecisFigure> figures;
+      try {
+        figures = await repo.figures();
+      } catch (_) {
+        figures = state.figures;
+      }
       if (!ref.mounted) return;
       if (passages.isEmpty && state.search != null) {
-        state = PrecisState(PrecisStatus.ready, search: state.search);
+        state = PrecisState(PrecisStatus.ready, search: state.search, figures: figures);
         return;
       }
-      await ref.read(precisPackStoreProvider).save(passages);
+      final store = ref.read(precisPackStoreProvider);
+      await store.save(passages);
+      await store.saveFigures(figures);
       if (!ref.mounted) return;
-      state = PrecisState(PrecisStatus.ready, search: PrecisSearch(passages));
+      state = PrecisState(PrecisStatus.ready, search: PrecisSearch(passages), figures: figures);
     } catch (e) {
       if (!ref.mounted) return;
       // Offline with a saved copy: keep answering from it.
       state = state.search != null
-          ? PrecisState(PrecisStatus.ready, search: state.search)
+          ? PrecisState(PrecisStatus.ready, search: state.search, figures: state.figures)
           : PrecisState(PrecisStatus.error,
               error: e is UnitDataFailure ? e.message : "Couldn't download the study material.");
     }
@@ -421,5 +443,33 @@ class PlanProgressController extends Notifier<Set<String>> {
     if (!next.remove(id)) next.add(id);
     state = next;
     ref.read(sharedPreferencesProvider)?.setStringList(_key, next.toList());
+  }
+}
+
+/// Signed links to figure files, fetched in batches and kept for the session.
+final figureUrlsProvider = NotifierProvider<FigureUrlsController, Map<String, String>>(FigureUrlsController.new);
+
+class FigureUrlsController extends Notifier<Map<String, String>> {
+  final _pending = <String>{};
+
+  @override
+  Map<String, String> build() {
+    ref.watch(unitRepositoryProvider);
+    return const {};
+  }
+
+  Future<void> ensure(List<String> paths) async {
+    final repo = ref.read(unitRepositoryProvider);
+    final missing = [for (final p in paths) if (!state.containsKey(p) && !_pending.contains(p)) p];
+    if (repo == null || missing.isEmpty) return;
+    _pending.addAll(missing);
+    try {
+      final urls = await repo.figureUrls(missing);
+      if (ref.mounted) state = {...state, ...urls};
+    } catch (_) {
+      // Leave them missing; the figure shows a placeholder.
+    } finally {
+      _pending.removeAll(missing);
+    }
   }
 }

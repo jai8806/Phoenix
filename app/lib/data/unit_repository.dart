@@ -2,6 +2,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'models/comms.dart';
 import 'models/diary.dart';
+import 'models/figure.dart';
 import 'models/test.dart';
 import 'models/user.dart';
 import 'models/ustaad.dart';
@@ -29,6 +30,12 @@ abstract interface class UnitRepository {
 
   /// Every précis passage this member may read, for offline search.
   Future<List<PrecisPassage>> precisPassages();
+
+  /// Figures (maps, signs, badges, diagrams) with their chapter and page.
+  Future<List<PrecisFigure>> figures();
+
+  /// Short-lived links to figure files, keyed by storage path.
+  Future<Map<String, String>> figureUrls(List<String> paths);
 }
 
 /// Thrown with a message that is safe to show.
@@ -187,6 +194,41 @@ class SupabaseUnitRepository implements UnitRepository {
         }
         return out;
       }, 'download the study material');
+
+  @override
+  Future<List<PrecisFigure>> figures() => _guard(() async {
+        final out = <PrecisFigure>[];
+        const pageSize = 1000;
+        for (var from = 0;; from += pageSize) {
+          final rows = await _client
+              .from('figures')
+              .select('id, document_title, chapter_code, page, storage_path, width, height')
+              .order('chapter_code')
+              .order('page')
+              .range(from, from + pageSize - 1);
+          for (final r in rows) {
+            out.add(PrecisFigure(
+              id: r['id'] as String,
+              title: r['document_title'] as String,
+              chapterCode: r['chapter_code'] as String,
+              page: (r['page'] as num?)?.toInt(),
+              path: r['storage_path'] as String,
+              width: (r['width'] as num?)?.toInt(),
+              height: (r['height'] as num?)?.toInt(),
+            ));
+          }
+          if (rows.length < pageSize) break;
+        }
+        return out;
+      }, 'load the figures');
+
+  @override
+  Future<Map<String, String>> figureUrls(List<String> paths) => _guard(() async {
+        if (paths.isEmpty) return const {};
+        final results = await _client.storage.from('precis-figures').createSignedUrlsResult(paths, 60 * 60 * 12);
+        // Files not uploaded yet come back as failures and simply show a placeholder.
+        return {for (final r in results.whereType<SignedUrlSuccess>()) r.path: r.signedUrl};
+      }, 'load the figures');
 
   @override
   Future<UstaadReply> askUstaad(String question) async {

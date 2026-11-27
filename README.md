@@ -32,7 +32,7 @@ See [docs/PLAN.md](docs/PLAN.md) for the roadmap and
 | Ustaad précis mode: answers quoted from the précis with chapter and page, offline, no AI | Done (search runs on the phone) |
 | Ustaad "Explain simply" (optional AI) | Done: Supabase Edge Function, free Gemini by default (Claude optional) |
 | B/C Cert prep: weightage from the 2024 paper, most-asked chapters, study plan with spaced revision, full mock in the exam pattern, chapter reader | Done |
-| Figures from the précis in Ustaad and Learn | Next |
+| Figures from the précis in Ustaad and the chapter reader | Done (871 figures, private storage) |
 | Live data: announcements, calendar, training diary | Done (Supabase) |
 | ANO review of précis MCQs → practice bank | Done |
 | Live roster, attendance, hosted tests | Next |
