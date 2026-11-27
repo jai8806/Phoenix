@@ -4,9 +4,10 @@ import '../models/roster.dart';
 import '../models/test.dart';
 import '../models/user.dart';
 
-/// Sample data for demo mode. Names and records are made up.
+/// Sample data for demo mode. The unit and its rhythm follow NCC RVCE; the
+/// people and records are made up.
 abstract final class DemoData {
-  static const unitName = 'Demo Unit · 1 Bn NCC';
+  static const unitName = 'NCC RVCE · 2/2 Coy, 6 Kar Sig Regt';
 
   static const cadet = AppUser(
     id: 'demo-cadet',
@@ -91,15 +92,17 @@ abstract final class DemoData {
         ),
         Announcement(
           id: 'a2',
-          title: 'Mock test #3 is live',
-          body: 'A 50-question mock covering Drill, Weapon Training and Map Reading is open until Sunday night.',
+          title: 'Shaurya at 8th Mile: volunteers needed',
+          body: 'We run map reading, Kholna-Jodna, obstacle training and the weapon display again this year. '
+              'Second-years, give your names to the SUO by Friday.',
           author: 'SUO Diya Rao',
           createdAt: now.subtract(const Duration(days: 1, hours: 2)),
         ),
         Announcement(
           id: 'a3',
-          title: 'Blood donation drive',
-          body: 'Volunteers needed for the campus blood donation drive next Wednesday. Give your names to your platoon commander.',
+          title: 'SSCD: blood donation camp with the Rotaract Club',
+          body: 'Volunteers report at the BT Quadrangle at 0730 to set up registration and manage the crowd. '
+              'Counts towards your SSCD hours.',
           author: 'Lt Kavitha Iyer',
           createdAt: now.subtract(const Duration(days: 3)),
         ),
@@ -107,20 +110,23 @@ abstract final class DemoData {
 
   static List<CalendarEvent> events(DateTime now) {
     final d = DateTime(now.year, now.month, now.day);
+    // Parades are on Saturdays (and general holidays), 20 in a year.
+    final saturday = d.add(Duration(days: (DateTime.saturday - d.weekday) % 7));
     return [
       CalendarEvent(
-          id: 'e1', title: 'Parade', kind: EventKind.parade,
-          startsAt: d.add(const Duration(days: 2, hours: 7)), location: 'College ground'),
+          id: 'e1', title: 'Saturday parade', kind: EventKind.parade,
+          startsAt: saturday.add(const Duration(hours: 7, minutes: 30)), location: 'RVCE parade ground'),
       CalendarEvent(
-          id: 'e2', title: 'Mock test #3 closes', kind: EventKind.test,
-          startsAt: d.add(const Duration(days: 4, hours: 23))),
+          id: 'e2', title: 'Shaurya at 8th Mile', kind: EventKind.event,
+          startsAt: d.add(const Duration(days: 8, hours: 9)),
+          endsAt: d.add(const Duration(days: 9, hours: 17)), location: 'Old Library, RVCE'),
       CalendarEvent(
-          id: 'e3', title: 'Parade', kind: EventKind.parade,
-          startsAt: d.add(const Duration(days: 9, hours: 7)), location: 'College ground'),
+          id: 'e3', title: 'Saturday parade', kind: EventKind.parade,
+          startsAt: saturday.add(const Duration(days: 14, hours: 7, minutes: 30)), location: 'RVCE parade ground'),
       CalendarEvent(
-          id: 'e4', title: 'Annual Training Camp', kind: EventKind.camp,
+          id: 'e4', title: 'Combined Annual Training Camp', kind: EventKind.camp,
           startsAt: d.add(const Duration(days: 30)),
-          endsAt: d.add(const Duration(days: 40)), location: 'Camp site (TBC)'),
+          endsAt: d.add(const Duration(days: 39)), location: 'Camp site (TBC)'),
       CalendarEvent(
           id: 'e5', title: 'B Certificate exam', kind: EventKind.exam,
           startsAt: d.add(const Duration(days: 81, hours: 9)), location: 'Exam centre (TBC)'),

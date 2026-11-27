@@ -442,6 +442,8 @@ const _sessionDb = {
   SessionType.mapReading: 'map_reading',
   SessionType.obstacle: 'obstacle',
   SessionType.cultural: 'cultural',
+  SessionType.sscd: 'sscd',
+  SessionType.ceremonial: 'ceremonial',
   SessionType.other: 'other',
 };
 

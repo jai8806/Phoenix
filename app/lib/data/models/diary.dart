@@ -7,6 +7,8 @@ enum SessionType {
   mapReading('Map reading', Icons.explore_outlined),
   obstacle('Obstacle', Icons.terrain_outlined),
   cultural('Cultural', Icons.music_note_outlined),
+  sscd('SSCD', Icons.volunteer_activism_outlined),
+  ceremonial('Ceremonial (GoH, band)', Icons.military_tech_outlined),
   other('Other', Icons.edit_note);
 
   const SessionType(this.label, this.icon);
