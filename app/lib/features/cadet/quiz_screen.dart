@@ -7,6 +7,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/tokens.dart';
+import '../../data/exam/exam_data.dart';
 import '../../data/models/test.dart';
 import '../../data/providers.dart';
 import '../shared/widgets.dart';
@@ -47,6 +48,26 @@ class _QuizScreenState extends ConsumerState<QuizScreen> {
       _questions = bank.where((q) => ids.contains(q.id)).toList()..shuffle(rng);
       _marking = def.marking;
       _limit = Duration(minutes: def.durationMinutes);
+    } else if (widget.testId == 'mock') {
+      // Full mock in the exam pattern: each subject gets its share of questions.
+      final insights = insightsFor(ref.read(certTrackProvider));
+      final picked = <Question>[];
+      for (final s in insights.ranked()) {
+        final pool = bank.where((q) => s.bankSections.contains(q.subject)).toList()..shuffle(rng);
+        picked.addAll(pool.take(s.questions));
+      }
+      _title = 'Full ${insights.exam} mock';
+      _questions = picked;
+      _marking = const MarkingScheme();
+      _limit = Duration(minutes: (insights.durationMinutes * picked.length / insights.questionCount).ceil().clamp(1, 600));
+    } else if (widget.testId.startsWith('subject:')) {
+      final name = widget.testId.substring('subject:'.length);
+      final s = subjectNamed(insightsFor(ref.read(certTrackProvider)), name);
+      final pool = bank.where((q) => s?.bankSections.contains(q.subject) ?? false).toList()..shuffle(rng);
+      _title = name;
+      _questions = pool.take(25).toList();
+      _marking = const MarkingScheme();
+      _limit = Duration(minutes: _questions.length.clamp(1, 25));
     } else {
       final count = widget.testId == 'fall-in' ? 5 : 10;
       _title = widget.testId == 'fall-in' ? 'Daily Fall-In' : 'Quick practice';

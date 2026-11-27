@@ -8,6 +8,7 @@ import '../../core/theme/app_theme.dart';
 import '../../core/theme/tokens.dart';
 import '../../data/providers.dart';
 import '../shared/widgets.dart';
+import 'study_screens.dart';
 
 class TodayScreen extends ConsumerWidget {
   const TodayScreen({super.key});
@@ -36,6 +37,7 @@ class TodayScreen extends ConsumerWidget {
           const _SyncBanner(),
           const _ExamCountdownCard(),
           const SizedBox(height: Space.md),
+          const _TodayPlanCard(),
           const _EligibilityCard(),
           const SizedBox(height: Space.md),
           const _FallInCard(),
@@ -221,6 +223,73 @@ class _SyncBanner extends ConsumerWidget {
               }
             },
             child: const Text('Retry'),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+
+class _TodayPlanCard extends ConsumerWidget {
+  const _TodayPlanCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final plan = ref.watch(studyPlanProvider);
+    final done = ref.watch(planProgressProvider);
+    final t = Theme.of(context).textTheme;
+    final c = Theme.of(context).colorScheme;
+    final today = plan == null || plan.isEmpty ? null : plan.days.first;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: Space.md),
+      child: Card(
+        child: InkWell(
+          onTap: () => context.push(Routes.plan),
+          child: Padding(
+            padding: const EdgeInsets.all(Space.lg),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                Icon(Icons.event_note_outlined, color: c.primary),
+                const SizedBox(width: Space.sm),
+                Expanded(child: Text("Today's study", style: t.titleSmall)),
+                if (today != null)
+                  Text(
+                    '${today.items.where((i) => done.contains(planItemId(today, i))).length}/${today.items.length} done',
+                    style: t.labelMedium?.copyWith(color: c.onSurfaceVariant),
+                  ),
+                const Icon(Icons.chevron_right),
+              ]),
+              const SizedBox(height: Space.sm),
+              if (today == null)
+                Text('Set your exam date to get a plan weighted by marks, with revision built in.',
+                    style: t.bodyMedium?.copyWith(color: c.onSurfaceVariant))
+              else
+                for (final item in today.items.take(3))
+                  Padding(
+                    padding: const EdgeInsets.only(top: Space.xs),
+                    child: Row(children: [
+                      Icon(
+                        done.contains(planItemId(today, item))
+                            ? Icons.check_circle
+                            : (item.revision ? Icons.replay : Icons.radio_button_unchecked),
+                        size: 18,
+                        color: done.contains(planItemId(today, item)) ? c.primary : c.onSurfaceVariant,
+                      ),
+                      const SizedBox(width: Space.sm),
+                      Expanded(
+                        child: Text(
+                          item.chapter == null
+                              ? item.label!
+                              : '${item.revision ? 'Revise' : 'Study'} ${item.chapter!.title}',
+                          style: t.bodyMedium,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ]),
+                  ),
+            ]),
           ),
         ),
       ),

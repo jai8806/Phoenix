@@ -189,13 +189,44 @@ void main() {
     Future<void> scrollTo(Finder f) => tester.scrollUntilVisible(f, 300,
         scrollable: find.descendant(of: find.byType(LearnScreen), matching: find.byType(Scrollable)).first);
 
-    await scrollTo(find.text('Junior (JD/JW)'));
     // A senior-division cadet starts on the official SD/SW list.
+    await scrollTo(find.text('Special Subject (Army) SD/SW · DGNCC Précis'));
     expect(find.text('Special Subject (Army) SD/SW · DGNCC Précis'), findsOneWidget);
+    await scrollTo(find.text('Junior (JD/JW)'));
     await tester.tap(find.text('Junior (JD/JW)'));
     await tester.pumpAndSettle();
     await scrollTo(find.text('Map Reading'));
     expect(find.text('Special Subject (Army) JD/JW · DGNCC Précis 2025'), findsOneWidget);
     expect(find.text('10 subjects · 27 periods'), findsOneWidget);
   });
+
+  testWidgets('Learn shows B Cert weightage and opens a subject with its most-asked chapters', (tester) async {
+    await pumpApp(tester);
+    await signInAs(tester, AppRole.cadet);
+    await tester.tap(find.text('Learn'));
+    await tester.pumpAndSettle();
+    expect(find.text('350'), findsOneWidget); // exam hero: marks
+    expect(find.text('Personality Development'), findsOneWidget); // heaviest common subject
+    await tester.tap(find.text('Special · 110'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Map Reading').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Most asked chapters'.toUpperCase()), findsOneWidget);
+    expect(find.text('24'), findsOneWidget); // marks tile
+  });
+
+  testWidgets('study plan: set an exam date, get today\'s tasks, tick one off', (tester) async {
+    final c = await pumpApp(tester);
+    await signInAs(tester, AppRole.cadet);
+    c.read(examDateProvider.notifier).set(_now.add(const Duration(days: 45)));
+    c.read(routerProvider).push(Routes.plan);
+    await tester.pumpAndSettle();
+    expect(find.text('45 days to go'), findsOneWidget);
+    expect(find.text('TODAY'), findsOneWidget);
+    expect(c.read(planProgressProvider), isEmpty);
+    await tester.tap(find.byType(Checkbox).first);
+    await tester.pumpAndSettle();
+    expect(c.read(planProgressProvider), hasLength(1));
+  });
 }
+

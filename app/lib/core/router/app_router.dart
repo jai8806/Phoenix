@@ -12,6 +12,7 @@ import '../../features/cadet/diary_screen.dart';
 import '../../features/cadet/learn_screen.dart';
 import '../../features/cadet/profile_screen.dart';
 import '../../features/cadet/quiz_screen.dart';
+import '../../features/cadet/study_screens.dart';
 import '../../features/cadet/today_screen.dart';
 import '../../features/cadet/ustaad_screen.dart';
 import '../../features/command/command_shell.dart';
@@ -34,7 +35,10 @@ abstract final class Routes {
   static const newDiaryEntry = '/diary/new';
   static const calendar = '/calendar';
   static const announcements = '/announcements';
-  static String quiz(String testId) => '/quiz/$testId';
+  static String quiz(String testId) => '/quiz/${Uri.encodeComponent(testId)}';
+  static const plan = '/study-plan';
+  static String subject(String name) => '/subject?name=${Uri.encodeQueryComponent(name)}';
+  static String chapter(String code) => '/chapter?code=${Uri.encodeQueryComponent(code)}';
 
   static const overview = '/command/overview';
   static const cadets = '/command/cadets';
@@ -96,11 +100,14 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(path: Routes.newDiaryEntry, builder: (_, _) => const DiaryEntryScreen()),
       GoRoute(path: Routes.review, builder: (_, _) => const ReviewScreen()),
+      GoRoute(path: Routes.plan, builder: (_, _) => const StudyPlanScreen()),
+      GoRoute(path: '/subject', builder: (_, s) => SubjectScreen(name: s.uri.queryParameters['name'] ?? '')),
+      GoRoute(path: '/chapter', builder: (_, s) => ChapterScreen(code: s.uri.queryParameters['code'] ?? '')),
       GoRoute(path: Routes.calendar, builder: (_, _) => const CalendarScreen(editable: false)),
       GoRoute(path: Routes.announcements, builder: (_, _) => const AnnouncementsScreen(editable: false)),
       GoRoute(
         path: '/quiz/:testId',
-        builder: (_, state) => QuizScreen(testId: state.pathParameters['testId']!),
+        builder: (_, state) => QuizScreen(testId: Uri.decodeComponent(state.pathParameters['testId']!)),
       ),
     ],
   );

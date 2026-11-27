@@ -141,3 +141,20 @@ Ustaad.
    approve draft questions.
 4. Ustaad Edge Function: `search_chunks`, then Claude answers only from those
    passages and cites them.
+
+## Exam weightage and most-asked chapters
+
+`tools/ingest/analyze_pyq.py` writes `app/lib/data/exam/b_cert_insights.dart`:
+
+- **Marks per subject** from the 2024 B Cert paper (KAR & GOA, Army SD/SW),
+  checked against its question numbering (2 marks each): Common 240, Special
+  110. Leadership (18) is inferred from question numbers because its heading
+  is unreadable in the scan. Drill has no written marks (practical only).
+- **Most-asked chapters**: each bank and paper question is matched to the
+  précis chapter it is about (keyword search within its subject); a chapter's
+  share is the fraction of that subject's questions it got. 1,603 of 1,681
+  questions matched. These are frequencies in the banks, a guide rather than
+  a guarantee.
+
+Only numbers and chapter titles go into the app. C Cert currently uses the
+B Cert pattern as a guide until a C Cert paper is added.

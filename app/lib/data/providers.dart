@@ -11,6 +11,7 @@ import 'models/diary.dart';
 import 'models/roster.dart';
 import 'models/test.dart';
 import 'models/user.dart';
+import 'exam/exam_data.dart';
 import 'precis_pack.dart';
 import 'unit_repository.dart';
 import '../domain/precis_search.dart';
@@ -360,5 +361,65 @@ class PrecisController extends Notifier<PrecisState> {
           : PrecisState(PrecisStatus.error,
               error: e is UnitDataFailure ? e.message : "Couldn't download the study material.");
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Exam prep: track, exam date and study-plan progress (saved on the phone)
+// ---------------------------------------------------------------------------
+final certTrackProvider = NotifierProvider<CertTrackController, CertTrack>(CertTrackController.new);
+
+class CertTrackController extends Notifier<CertTrack> {
+  static const _key = 'cert_track';
+
+  @override
+  CertTrack build() {
+    final saved = ref.read(sharedPreferencesProvider)?.getString(_key);
+    if (saved != null) return CertTrack.values.firstWhere((t) => t.name == saved, orElse: () => CertTrack.b);
+    final user = ref.read(authControllerProvider);
+    return (user?.trainingYear ?? 2) >= 3 ? CertTrack.c : CertTrack.b;
+  }
+
+  void set(CertTrack t) {
+    state = t;
+    ref.read(sharedPreferencesProvider)?.setString(_key, t.name);
+  }
+}
+
+/// The exam date the cadet plans for: their own choice, else the next exam on
+/// the unit calendar, else null.
+final examDateProvider = NotifierProvider<ExamDateController, DateTime?>(ExamDateController.new);
+
+class ExamDateController extends Notifier<DateTime?> {
+  static const _key = 'exam_date';
+
+  @override
+  DateTime? build() {
+    final saved = ref.read(sharedPreferencesProvider)?.getString(_key);
+    if (saved != null) return DateTime.tryParse(saved);
+    return ref.watch(nextExamProvider)?.startsAt;
+  }
+
+  void set(DateTime d) {
+    final day = DateTime(d.year, d.month, d.day);
+    state = day;
+    ref.read(sharedPreferencesProvider)?.setString(_key, day.toIso8601String());
+  }
+}
+
+/// Plan items ticked off, keyed "yyyy-mm-dd|item".
+final planProgressProvider = NotifierProvider<PlanProgressController, Set<String>>(PlanProgressController.new);
+
+class PlanProgressController extends Notifier<Set<String>> {
+  static const _key = 'plan_done';
+
+  @override
+  Set<String> build() => (ref.read(sharedPreferencesProvider)?.getStringList(_key) ?? const []).toSet();
+
+  void toggle(String id) {
+    final next = {...state};
+    if (!next.remove(id)) next.add(id);
+    state = next;
+    ref.read(sharedPreferencesProvider)?.setStringList(_key, next.toList());
   }
 }
