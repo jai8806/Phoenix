@@ -52,7 +52,7 @@ class ProfileScreen extends ConsumerWidget {
         ListCard(children: [
           ListTile(title: const Text('Rank'), trailing: Text(user.rank ?? '—')),
           ListTile(title: const Text('Regimental number'), trailing: Text(user.regimentalNo ?? '—')),
-          ListTile(title: const Text('Unit'), trailing: Text(user.unitName ?? '—')),
+          ListTile(title: const Text('Unit'), subtitle: Text(user.unitName ?? '—')),
           ListTile(title: const Text('Training year'), trailing: Text(user.trainingYear?.toString() ?? '—')),
           if (record != null) ...[
             ListTile(
