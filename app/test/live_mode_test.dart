@@ -11,6 +11,8 @@ import 'package:phoenix/data/models/user.dart';
 import 'package:phoenix/data/models/ustaad.dart';
 import 'package:phoenix/data/providers.dart';
 import 'package:phoenix/data/unit_repository.dart';
+import 'package:phoenix/data/precis_pack.dart';
+import 'package:phoenix/domain/precis_search.dart';
 import 'package:phoenix/features/cadet/diary_entry_screen.dart';
 
 final now = DateTime(2026, 11, 26, 9);
@@ -29,6 +31,23 @@ class FakeUnitRepo implements UnitRepository {
   final approvals = <(String, int)>[];
   bool failAnnouncements = false;
   bool failPost = false;
+  bool offline = false;
+  int aiCalls = 0;
+
+  static const demoPassages = [
+    PrecisPassage(id: 1, title: 'Demo Army Book', heading: 'AF I · Introduction', page: 2,
+        content: 'The responsibility for national defence rests with the cabinet. '
+            'The President of India is the Supreme Commander of the Indian Armed Forces.'),
+    PrecisPassage(id: 2, title: 'Demo Map Book', heading: 'MR III · Types of North', page: 185,
+        content: 'There are three types of north. (a) True north points to the geographic pole. '
+            '(b) Magnetic north is shown by the compass needle. (c) Grid north follows the grid lines.'),
+  ];
+
+  @override
+  Future<List<PrecisPassage>> precisPassages() async {
+    if (offline) throw const UnitDataFailure("Couldn't download the study material. Check your connection and try again.");
+    return demoPassages;
+  }
 
   @override
   Future<List<Announcement>> announcements() async {
@@ -72,11 +91,14 @@ class FakeUnitRepo implements UnitRepository {
   Future<List<KnowledgeDocument>> documents() async => const [];
 
   @override
-  Future<UstaadReply> askUstaad(String question) async => const UstaadReply(
+  Future<UstaadReply> askUstaad(String question) async {
+    aiCalls++;
+    return const UstaadReply(
         answer: 'The President of India is the Supreme Commander [1].',
         covered: true,
         sources: [UstaadSource(n: 1, title: 'Special Subject (Army) JD/JW (2025)', heading: 'AF I · Introduction', pages: '2')],
       );
+  }
 }
 
 class LiveAuth implements AuthRepository {
@@ -106,7 +128,7 @@ const ano = AppUser(id: 'u2', fullName: 'Kavitha Iyer', role: AppRole.ano, rank:
     unitName: 'Test Unit', unitId: 'unit-1');
 
 Future<(ProviderContainer, FakeUnitRepo)> pumpLive(WidgetTester tester, AppUser user,
-    {FakeUnitRepo? repo, Size size = const Size(420, 900)}) async {
+    {FakeUnitRepo? repo, Size size = const Size(420, 900), PrecisPackStore? store}) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
@@ -116,6 +138,7 @@ Future<(ProviderContainer, FakeUnitRepo)> pumpLive(WidgetTester tester, AppUser 
     initialUserProvider.overrideWithValue(user),
     unitRepositoryFactoryProvider.overrideWithValue((_) => fake),
     clockProvider.overrideWithValue(() => now),
+    precisPackStoreProvider.overrideWithValue(store ?? MemoryPrecisPackStore()),
   ]);
   addTearDown(c.dispose);
   await tester.pumpWidget(UncontrolledProviderScope(container: c, child: const PhoenixApp()));
@@ -189,15 +212,59 @@ void main() {
     expect(c.read(diaryProvider).single.shooting?.score, 47);
   });
 
-  testWidgets('Ustaad answers live with its sources', (tester) async {
+  Future<void> ask(WidgetTester tester, String q) async {
+    await tester.enterText(find.widgetWithText(TextField, 'Ask a question'), q);
+    await tester.tap(find.byTooltip('Send'));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('Ustaad answers from the précis without AI; Explain simply calls the AI', (tester) async {
+    final (c, repo) = await pumpLive(tester, cadet);
+    await tester.tap(find.text('Ustaad'));
+    await tester.pumpAndSettle();
+    expect(find.text('Offline ready'), findsOneWidget);
+
+    await ask(tester, 'Who is the supreme commander?');
+    expect(find.text('FROM YOUR PRÉCIS'), findsOneWidget);
+    expect(find.text('The President of India is the Supreme Commander of the Indian Armed Forces.'), findsOneWidget);
+    expect(find.text('Demo Army Book · AF I · Introduction · p. 2'), findsWidgets);
+    expect(repo.aiCalls, 0); // no AI for the main answer
+
+    await tester.tap(find.text('Explain simply'));
+    await tester.pumpAndSettle();
+    expect(repo.aiCalls, 1);
+    expect(find.text('AI EXPLANATION'), findsOneWidget);
+    expect(find.text('[1] Special Subject (Army) JD/JW (2025) · AF I · Introduction · p. 2'), findsOneWidget);
+    expect(c.read(precisPackStoreProvider), isA<MemoryPrecisPackStore>());
+  });
+
+  testWidgets('Ustaad says plainly when the précis does not cover a question', (tester) async {
     await pumpLive(tester, cadet);
     await tester.tap(find.text('Ustaad'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.widgetWithText(TextField, 'Ask a question'), 'Who is the supreme commander?');
-    await tester.tap(find.byTooltip('Send'));
+    await ask(tester, 'who won the football league');
+    expect(find.textContaining("isn't in your précis"), findsOneWidget);
+  });
+
+  testWidgets('offline, Ustaad answers from the copy saved on the phone', (tester) async {
+    final store = MemoryPrecisPackStore()..saved = FakeUnitRepo.demoPassages;
+    await pumpLive(tester, cadet, repo: FakeUnitRepo()..offline = true, store: store);
+    await tester.tap(find.text('Ustaad'));
     await tester.pumpAndSettle();
-    expect(find.text('The President of India is the Supreme Commander [1].'), findsOneWidget);
-    expect(find.text('[1] Special Subject (Army) JD/JW (2025) · AF I · Introduction · p. 2'), findsOneWidget);
+    await ask(tester, 'what is magnetic north');
+    expect(find.text('(b) Magnetic north is shown by the compass needle.'), findsOneWidget);
+  });
+
+  testWidgets('first launch offline explains the download failed and offers retry', (tester) async {
+    final repo = FakeUnitRepo()..offline = true;
+    await pumpLive(tester, cadet, repo: repo);
+    await tester.tap(find.text('Ustaad'));
+    await tester.pumpAndSettle();
+    expect(find.text("Couldn't download the study material. Check your connection and try again."), findsOneWidget);
+    repo.offline = false;
+    await tester.tap(find.text('Try again'));
+    await tester.pumpAndSettle();
+    expect(find.text('Offline ready'), findsOneWidget);
   });
 
   testWidgets('ANO approves a précis question and it joins the practice bank', (tester) async {
@@ -223,6 +290,17 @@ void main() {
     c.read(routerProvider).go(Routes.review);
     await tester.pumpAndSettle();
     expect(c.read(routerProvider).state.matchedLocation, Routes.today);
+  });
+
+  testWidgets('signing out deletes the précis saved on the phone', (tester) async {
+    final store = MemoryPrecisPackStore();
+    final (c, _) = await pumpLive(tester, cadet, store: store);
+    await tester.tap(find.text('Ustaad'));
+    await tester.pumpAndSettle();
+    expect(store.saved, isNotEmpty);
+    await c.read(authControllerProvider.notifier).signOut();
+    await tester.pumpAndSettle();
+    expect(store.saved, isNull);
   });
 
   group('row mapping', () {

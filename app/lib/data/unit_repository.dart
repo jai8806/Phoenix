@@ -5,6 +5,7 @@ import 'models/diary.dart';
 import 'models/test.dart';
 import 'models/user.dart';
 import 'models/ustaad.dart';
+import '../domain/precis_search.dart';
 
 /// Everything a signed-in member reads or writes for their unit.
 abstract interface class UnitRepository {
@@ -25,6 +26,9 @@ abstract interface class UnitRepository {
   Future<List<KnowledgeDocument>> documents();
 
   Future<UstaadReply> askUstaad(String question);
+
+  /// Every précis passage this member may read, for offline search.
+  Future<List<PrecisPassage>> precisPassages();
 }
 
 /// Thrown with a message that is safe to show.
@@ -158,6 +162,31 @@ class SupabaseUnitRepository implements UnitRepository {
             ),
         ];
       }, 'load the knowledge base');
+
+  @override
+  Future<List<PrecisPassage>> precisPassages() => _guard(() async {
+        const pageSize = 1000;
+        final out = <PrecisPassage>[];
+        for (var from = 0;; from += pageSize) {
+          final rows = await _client
+              .from('document_chunks')
+              .select('id, page, page_end, heading, content, documents(title)')
+              .order('id')
+              .range(from, from + pageSize - 1);
+          for (final r in rows) {
+            out.add(PrecisPassage(
+              id: (r['id'] as num).toInt(),
+              title: (r['documents'] as Map<String, dynamic>?)?['title'] as String? ?? 'Précis',
+              heading: r['heading'] as String? ?? '',
+              content: r['content'] as String,
+              page: (r['page'] as num?)?.toInt(),
+              pageEnd: (r['page_end'] as num?)?.toInt(),
+            ));
+          }
+          if (rows.length < pageSize) break;
+        }
+        return out;
+      }, 'download the study material');
 
   @override
   Future<UstaadReply> askUstaad(String question) async {

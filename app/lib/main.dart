@@ -7,6 +7,7 @@ import 'app.dart';
 import 'core/config/env.dart';
 import 'data/auth_repository.dart';
 import 'data/models/user.dart';
+import 'data/precis_pack.dart';
 import 'data/providers.dart';
 import 'data/unit_repository.dart';
 
@@ -32,6 +33,7 @@ Future<void> main() async {
       authRepositoryProvider.overrideWithValue(auth),
       initialUserProvider.overrideWithValue(initialUser),
       unitRepositoryFactoryProvider.overrideWithValue(unitRepository),
+      if (Env.hasBackend) precisPackStoreProvider.overrideWithValue(FilePrecisPackStore()),
     ],
     child: const PhoenixApp(),
   ));

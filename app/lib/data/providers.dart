@@ -11,7 +11,9 @@ import 'models/diary.dart';
 import 'models/roster.dart';
 import 'models/test.dart';
 import 'models/user.dart';
+import 'precis_pack.dart';
 import 'unit_repository.dart';
+import '../domain/precis_search.dart';
 
 /// Overridden in main() and in tests.
 final authRepositoryProvider = Provider<AuthRepository>((ref) => DemoAuthRepository());
@@ -64,6 +66,10 @@ class AuthController extends Notifier<AppUser?> {
       await _repo.signOut();
     } finally {
       state = null;
+      // The précis saved for offline use belongs to the signed-in member only.
+      try {
+        await ref.read(precisPackStoreProvider).clear();
+      } catch (_) {}
     }
   }
 }
@@ -290,3 +296,69 @@ class DiaryController extends LiveListController<DiaryEntry> {
 final diaryStatsProvider = Provider<DiaryStats>(
   (ref) => computeDiaryStats(ref.watch(diaryProvider), today: ref.watch(clockProvider)()),
 );
+
+// ---------------------------------------------------------------------------
+// Offline précis for Ustaad
+// ---------------------------------------------------------------------------
+final precisPackStoreProvider = Provider<PrecisPackStore>((ref) => MemoryPrecisPackStore());
+
+enum PrecisStatus { sample, loading, ready, error }
+
+class PrecisState {
+  const PrecisState(this.status, {this.search, this.error, this.refreshing = false});
+
+  final PrecisStatus status;
+  final PrecisSearch? search;
+  final String? error;
+
+  /// A newer copy is downloading while the saved one is in use.
+  final bool refreshing;
+
+  int get passageCount => search?.passages.length ?? 0;
+}
+
+/// Downloads the précis once, keeps it on the phone, and refreshes it in the
+/// background, so Ustaad can answer instantly and offline without any AI.
+final precisProvider = NotifierProvider<PrecisController, PrecisState>(PrecisController.new);
+
+class PrecisController extends Notifier<PrecisState> {
+  @override
+  PrecisState build() {
+    final repo = ref.watch(unitRepositoryProvider);
+    if (repo == null) return const PrecisState(PrecisStatus.sample);
+    Future.microtask(() => _start(repo));
+    return const PrecisState(PrecisStatus.loading);
+  }
+
+  Future<void> _start(UnitRepository repo) async {
+    final saved = await ref.read(precisPackStoreProvider).load();
+    if (!ref.mounted) return;
+    if (saved != null && saved.isNotEmpty) {
+      state = PrecisState(PrecisStatus.ready, search: PrecisSearch(saved), refreshing: true);
+    }
+    await refresh(repo);
+  }
+
+  Future<void> refresh([UnitRepository? r]) async {
+    final repo = r ?? ref.read(unitRepositoryProvider);
+    if (repo == null) return;
+    try {
+      final passages = await repo.precisPassages();
+      if (!ref.mounted) return;
+      if (passages.isEmpty && state.search != null) {
+        state = PrecisState(PrecisStatus.ready, search: state.search);
+        return;
+      }
+      await ref.read(precisPackStoreProvider).save(passages);
+      if (!ref.mounted) return;
+      state = PrecisState(PrecisStatus.ready, search: PrecisSearch(passages));
+    } catch (e) {
+      if (!ref.mounted) return;
+      // Offline with a saved copy: keep answering from it.
+      state = state.search != null
+          ? PrecisState(PrecisStatus.ready, search: state.search)
+          : PrecisState(PrecisStatus.error,
+              error: e is UnitDataFailure ? e.message : "Couldn't download the study material.");
+    }
+  }
+}
