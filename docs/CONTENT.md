@@ -30,7 +30,11 @@ public, so:
 | B Cert Paper 2024 · KAR & GOA (Army SD/SW) | `mcq_bank.py --kind paper` | 95 of 175 questions readable in the scan | 95 draft MCQs |
 | First Aid Lecture (H-5) | `--layout slides` | 147 slides | 59 passages |
 
-**1,634 passages and 1,913 draft MCQs in all.** None of the question banks
+| Practice Paper · General (C Cert pattern), Word | `mcq_bank.py` (.docx) | 4 labelled sections, rest marked Mixed | 223 draft MCQs |
+| C Cert paper 2024-25 (scanned, bilingual) | OCR (Tesseract) | Marks per section only; questions too garbled to import | — |
+| B Cert answer sheet 2025-26 (KAR & GOA) | — | Confirms structure and −0.5 negative marking | — |
+
+**1,634 passages and 2,136 draft MCQs in all.** None of the question banks
 include answer keys, so every question waits in the ANO's review queue.
 Suggesting answers by matching options against the précis was tried and was
 right only about half the time on a hand-checked sample, so no answer is
@@ -144,7 +148,7 @@ Ustaad.
 
 ## Exam weightage and most-asked chapters
 
-`tools/ingest/analyze_pyq.py` writes `app/lib/data/exam/b_cert_insights.dart`:
+`tools/ingest/analyze_pyq.py` writes `app/lib/data/exam/cert_insights.dart`:
 
 - **Marks per subject** from the 2024 B Cert paper (KAR & GOA, Army SD/SW),
   checked against its question numbering (2 marks each): Common 240, Special
@@ -156,5 +160,9 @@ Ustaad.
   questions matched. These are frequencies in the banks, a guide rather than
   a guarantee.
 
-Only numbers and chapter titles go into the app. C Cert currently uses the
-B Cert pattern as a guide until a C Cert paper is added.
+C Cert marks come from the 2024-25 C Cert paper, read with OCR; two
+headings were unreadable and were identified from question numbers and
+topics (Health & Hygiene 28, Obstacle Training 14). Its negative marking is
+not printed, so −0.5 is assumed and labelled as such in the app.
+
+Only numbers and chapter titles go into the app.

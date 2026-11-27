@@ -52,14 +52,6 @@ class _LearnScreenState extends ConsumerState<LearnScreen> {
         ),
         const SizedBox(height: Space.lg),
         _ExamHero(insights: insights, track: track),
-        if (usesBGuide(track)) ...[
-          const SizedBox(height: Space.sm),
-          Text(
-            'C Cert weightage for your directorate isn\'t added yet, so this uses the B Cert 2024 pattern as a guide. '
-            'Share a C Cert paper with your ANO to update it.',
-            style: t.bodySmall?.copyWith(color: c.onSurfaceVariant),
-          ),
-        ],
         const SectionHeader('Where the marks are'),
         SegmentedButton<ExamPaper>(
           segments: [
@@ -189,8 +181,11 @@ class _ExamHero extends StatelessWidget {
             fact('${insights.durationMinutes ~/ 60} h', 'time'),
           ]),
           const SizedBox(height: Space.lg),
-          Text('Pass: ${insights.passRule} · 2 marks per question',
+          Text('Pass: ${insights.passRule} · +2 per right answer'
+              '${insights.negativeMarks > 0 ? ', −${insights.negativeMarks} per wrong' : ''}',
               style: t.bodySmall?.copyWith(color: on.withValues(alpha: 0.85))),
+          if (insights.negativeNote.contains('assumed'))
+            Text(insights.negativeNote, style: t.bodySmall?.copyWith(color: on.withValues(alpha: 0.65))),
           Text(insights.source, style: t.bodySmall?.copyWith(color: on.withValues(alpha: 0.65))),
         ]),
       ),

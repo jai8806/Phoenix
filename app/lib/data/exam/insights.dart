@@ -58,6 +58,8 @@ class ExamInsights {
     required this.durationMinutes,
     required this.passRule,
     required this.questionsAnalysed,
+    this.negativeMarks = 0,
+    this.negativeNote = '',
     required this.subjects,
   });
 
@@ -68,6 +70,10 @@ class ExamInsights {
   final int durationMinutes;
   final String passRule;
   final int questionsAnalysed;
+
+  /// Marks taken off per wrong answer.
+  final double negativeMarks;
+  final String negativeNote;
   final List<SubjectInsight> subjects;
 
   int marksFor(ExamPaper p) => subjects.where((s) => s.paper == p).fold(0, (a, s) => a + s.marks);

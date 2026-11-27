@@ -1,7 +1,7 @@
 import '../../domain/study_plan.dart';
 import '../models/user.dart';
 import '../syllabus/syllabus.dart';
-import 'b_cert_insights.dart';
+import 'cert_insights.dart';
 import 'insights.dart';
 
 enum CertTrack {
@@ -12,11 +12,8 @@ enum CertTrack {
   final String label;
 }
 
-/// Weightage for a track. C Cert uses the B Cert 2024 analysis as a guide
-/// until a C Cert paper from the directorate is added.
-ExamInsights insightsFor(CertTrack track) => bCertInsights;
-
-bool usesBGuide(CertTrack track) => track == CertTrack.c;
+/// Weightage for a track, from that certificate's own past paper.
+ExamInsights insightsFor(CertTrack track) => track == CertTrack.b ? bCertInsights : cCertInsights;
 
 /// Official SD/SW chapters for a subject, with how often each was asked.
 List<StudyChapter> chaptersFor(SubjectInsight s) {

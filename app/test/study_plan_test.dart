@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:phoenix/data/exam/b_cert_insights.dart';
+import 'package:phoenix/data/exam/cert_insights.dart';
 import 'package:phoenix/data/exam/exam_data.dart';
 import 'package:phoenix/data/exam/insights.dart';
 import 'package:phoenix/domain/study_plan.dart';
@@ -77,4 +77,15 @@ void main() {
     expect(buildStudyPlan(insights: bCertInsights, chaptersBySubject: const {}, today: today, examDate: today).isEmpty,
         isTrue);
   });
+
+  test('C Cert uses its own 2024-25 weightage, which differs from B Cert', () {
+    expect(cCertInsights.marksFor(ExamPaper.common), 240);
+    expect(cCertInsights.marksFor(ExamPaper.special), 110);
+    expect(subjectNamed(cCertInsights, 'Weapon Training')!.marks, 10);
+    expect(subjectNamed(bCertInsights, 'Weapon Training')!.marks, 30);
+    expect(cCertInsights.ranked(ExamPaper.special).first.name, 'Field Craft & Battle Craft');
+    expect(insightsFor(CertTrack.c), same(cCertInsights));
+    expect(bCertInsights.negativeMarks, 0.5);
+  });
 }
+

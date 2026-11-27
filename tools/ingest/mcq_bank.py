@@ -66,7 +66,37 @@ KNOWN_SECTIONS = {
     "obstacle training", "border and coastal areas", "armed forces", "map reading", "field craft and battle craft",
     "military history", "communication", "communications", "introduction to infantry weapons and equipment",
     "social service & community development", "social service and community development", "first aid",
+    "ncc integration and awareness", "national integration & awareness",
 }
+
+
+DOCX_COUNTS: dict[str, int] = {}
+
+
+def docx_pages(path: Path) -> list[str]:
+    """A Word paper as one page of text: headings kept, questions numbered
+    (Word papers often leave them unnumbered), option paragraphs split into lines."""
+    import docx
+
+    lines: list[str] = []
+    n = 0
+    for para in docx.Document(str(path)).paragraphs:
+        text = para.text.strip()
+        if not text:
+            continue
+        m = re.search(r"\(\s*(\d+)\s*Questions?\s*\)\s*$", text, flags=re.I)
+        head = re.sub(r"\s*(MCQs?)?\s*\(\s*\d+\s*Questions?\s*\)\s*$", "", text, flags=re.I)
+        if m:
+            lines.append(head.strip())
+            DOCX_COUNTS[_clean_section(head.strip())] = int(m.group(1))
+        elif split_options(text.splitlines()[0], "a"):
+            lines.extend(l.strip() for l in text.splitlines() if l.strip())
+        elif _Q.match(text):
+            lines.append(text)
+        else:
+            n += 1
+            lines.append(f"{n}. {text}")
+    return ["\n".join(lines)]
 
 
 def _is_heading(line: str, next_line: str | None) -> bool:
@@ -167,9 +197,20 @@ def main() -> None:
     ap.add_argument("--out", type=Path, default=Path("content/build"))
     args = ap.parse_args()
 
-    with pdfplumber.open(args.pdf) as pdf:
-        pages = [p.extract_text() or "" for p in pdf.pages]
+    if args.pdf.suffix.lower() == ".docx":
+        pages = docx_pages(args.pdf)
+    else:
+        with pdfplumber.open(args.pdf) as pdf:
+            pages = [p.extract_text() or "" for p in pdf.pages]
     questions = parse_bank(pages)
+    # Word papers state how many questions each heading has; questions past
+    # that count belong to later, unlabelled sections.
+    seen_in: dict[str, int] = {}
+    for q in questions:
+        limit = DOCX_COUNTS.get(q.section)
+        seen_in[q.section] = seen_in.get(q.section, 0) + 1
+        if limit is not None and seen_in[q.section] > limit:
+            q.section = "Mixed Subjects"
 
     doc = {"title": args.title, "wing": args.wing, "level": args.level, "edition": "", "source_file": args.pdf.name,
            "kind": args.kind}

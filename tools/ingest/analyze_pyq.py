@@ -1,6 +1,6 @@
-"""Exam weightage and high-yield chapters for B Certificate (Army SD/SW).
+"""Exam weightage and high-yield chapters for B and C Certificate (Army SD/SW).
 
-    python3 tools/ingest/analyze_pyq.py --out app/lib/data/exam/b_cert_insights.dart
+    python3 tools/ingest/analyze_pyq.py --out app/lib/data/exam/cert_insights.dart
 
 Two inputs:
   * the marks blueprint, read from the 2024 B Cert paper (KAR & GOA
@@ -23,30 +23,71 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from ask import BM25  # noqa: E402
 
-# Marks per subject in the 2024 paper. "inferred" marks come from question
-# numbering where the scanned heading is unreadable.
-BLUEPRINT = [
-    # paper, subject, marks, précis group codes (SD/SW books), bank section names, note
-    ("common", "Personality Development", 60, ["PDLS"], ["Personality Development"], ""),
-    ("common", "Social Service & Community Development", 32, ["SA"], ["Social Service & Community Development (SSCD)", "PMJAY"], ""),
-    ("common", "Weapon Training", 30, ["WT"], ["Weapon Training"], ""),
-    ("common", "Health & Hygiene", 26, ["H"], ["Health and Hygiene"], ""),
-    ("common", "National Integration & Awareness", 20, ["NI"], ["National Integration"], ""),
-    ("common", "Leadership", 18, ["L"], ["Leadership"], "inferred from question numbers"),
-    ("common", "Disaster Management", 18, ["DM"], ["Disaster Management"], ""),
-    ("common", "Adventure", 16, ["ADV"], ["Adventure"], ""),
-    ("common", "Border & Coastal Areas", 8, [], ["Border And Coastal Areas"], ""),
-    ("common", "NCC General", 6, ["N"], ["NCC General"], ""),
-    ("common", "Obstacle Training", 6, [], ["Obstacle Training"], ""),
-    ("common", "Environment Awareness", 0, ["E"], ["Environmental Awareness And Conservation"], "not in the 2024 paper"),
-    ("common", "Drill", 0, ["FD"], ["Drill"], "tested in the practical, not the written paper"),
-    ("special", "Map Reading", 24, ["MR"], ["Map Reading (MR)", "Map Reading"], ""),
-    ("special", "Field Craft & Battle Craft", 24, ["FC/BC"], ["Field Craft And Battle Craft (Fc & Bc)", "Field Craft & Battle Craft (Fc & Bc)"], ""),
-    ("special", "Armed Forces", 20, ["AF"], ["Armed Forces"], ""),
-    ("special", "Military History", 20, ["MH"], ["Military History (MH)", "Military History"], ""),
-    ("special", "Infantry Weapons & Equipment", 16, ["INF"], ["Introduction To Infantry Weapons And Equipment", "Infantry Weapons & Equipment"], ""),
-    ("special", "Communication", 6, ["C"], ["Communication"], ""),
-]
+# Subject -> (précis group codes in the SD/SW books, section names used in banks and papers)
+SUBJECTS = {
+    "Personality Development": (["PDLS"], ["Personality Development"]),
+    "Social Service & Community Development": (["SA"], ["Social Service & Community Development (SSCD)", "PMJAY"]),
+    "Weapon Training": (["WT"], ["Weapon Training"]),
+    "Health & Hygiene": (["H"], ["Health and Hygiene"]),
+    "National Integration & Awareness": (["NI"], ["National Integration", "NCC Integration and Awareness"]),
+    "Leadership": (["L"], ["Leadership"]),
+    "Disaster Management": (["DM"], ["Disaster Management"]),
+    "Adventure": (["ADV"], ["Adventure"]),
+    "Border & Coastal Areas": ([], ["Border And Coastal Areas"]),
+    "NCC General": (["N"], ["NCC General"]),
+    "Obstacle Training": ([], ["Obstacle Training"]),
+    "Environment Awareness": (["E"], ["Environmental Awareness And Conservation"]),
+    "Drill": (["FD"], ["Drill"]),
+    "Map Reading": (["MR"], ["Map Reading (MR)", "Map Reading"]),
+    "Field Craft & Battle Craft": (["FC/BC"], ["Field Craft And Battle Craft (Fc & Bc)", "Field Craft & Battle Craft (Fc & Bc)"]),
+    "Armed Forces": (["AF"], ["Armed Forces"]),
+    "Military History": (["MH"], ["Military History (MH)", "Military History"]),
+    "Infantry Weapons & Equipment": (["INF"], ["Introduction To Infantry Weapons And Equipment", "Infantry Weapons & Equipment"]),
+    "Communication": (["C"], ["Communication"]),
+}
+
+# Marks per subject from real papers, checked against question numbering
+# (2 marks each). Notes say where a number is inferred.
+EXAMS = {
+    "bCertInsights": {
+        "exam": "B Certificate",
+        "source": "B Cert paper 2024 and answer sheet 2025-26 · KAR & GOA Directorate · Army SD/SW",
+        "negative": 0.5, "negative_note": "−0.5 per wrong answer (2025-26 answer sheet)",
+        "marks": [
+            ("common", "Personality Development", 60, ""), ("common", "Social Service & Community Development", 32, ""),
+            ("common", "Weapon Training", 30, ""), ("common", "Health & Hygiene", 26, ""),
+            ("common", "National Integration & Awareness", 20, ""),
+            ("common", "Leadership", 18, "inferred from question numbers"),
+            ("common", "Disaster Management", 18, ""), ("common", "Adventure", 16, ""),
+            ("common", "Border & Coastal Areas", 8, ""), ("common", "NCC General", 6, ""),
+            ("common", "Obstacle Training", 6, ""),
+            ("common", "Environment Awareness", 0, "not in the 2024 paper"),
+            ("common", "Drill", 0, "tested in the practical, not the written paper"),
+            ("special", "Map Reading", 24, ""), ("special", "Field Craft & Battle Craft", 24, ""),
+            ("special", "Armed Forces", 20, ""), ("special", "Military History", 20, ""),
+            ("special", "Infantry Weapons & Equipment", 16, ""), ("special", "Communication", 6, ""),
+        ],
+    },
+    "cCertInsights": {
+        "exam": "C Certificate",
+        "source": "C Cert paper 2024-25 · Army SD/SW (scanned paper, read with OCR)",
+        "negative": 0.5, "negative_note": "−0.5 per wrong answer assumed, as in B Cert; confirm with your ANO",
+        "marks": [
+            ("common", "Personality Development", 70, ""), ("common", "Social Service & Community Development", 36, ""),
+            ("common", "Health & Hygiene", 28, "heading unreadable; from question numbers and topics"),
+            ("common", "Disaster Management", 22, ""), ("common", "Leadership", 20, ""),
+            ("common", "Environment Awareness", 20, ""),
+            ("common", "Obstacle Training", 14, "heading unreadable; questions are on obstacles"),
+            ("common", "Weapon Training", 10, ""), ("common", "National Integration & Awareness", 10, ""),
+            ("common", "Border & Coastal Areas", 10, ""),
+            ("common", "NCC General", 0, "not in the 2024-25 paper"), ("common", "Adventure", 0, "not in the 2024-25 paper"),
+            ("common", "Drill", 0, "tested in the practical, not the written paper"),
+            ("special", "Field Craft & Battle Craft", 32, ""), ("special", "Map Reading", 30, ""),
+            ("special", "Military History", 20, ""), ("special", "Infantry Weapons & Equipment", 12, ""),
+            ("special", "Armed Forces", 10, ""), ("special", "Communication", 6, ""),
+        ],
+    },
+}
 
 
 def dart_str(s: str) -> str:
@@ -59,8 +100,9 @@ def main() -> None:
     ap.add_argument("--out", type=Path, required=True)
     args = ap.parse_args()
 
-    assert sum(m for p, _, m, *_ in BLUEPRINT if p == "common") == 240
-    assert sum(m for p, _, m, *_ in BLUEPRINT if p == "special") == 110
+    for spec in EXAMS.values():
+        assert sum(m for p, _, m, _ in spec["marks"] if p == "common") == 240, spec["exam"]
+        assert sum(m for p, _, m, _ in spec["marks"] if p == "special") == 110, spec["exam"]
 
     # Précis passages from the SD/SW books, grouped by lesson-code prefix.
     passages = []
@@ -75,19 +117,19 @@ def main() -> None:
         by_group[p["chapter_code"].rsplit("-", 1)[0]].append(i)
     bm = BM25([f"{p['section']} {p['text']}" for p in passages])
 
-    dirs = [d for d in sorted(args.build.glob("qb_*")) + sorted(args.build.glob("paper_*")) if d.is_dir()]
+    dirs = [d for pat in ("qb_*", "paper_*", "practice_*") for d in sorted(args.build.glob(pat)) if d.is_dir()]
     questions = [json.loads(l) for d in dirs
                  for l in (d / "questions.jsonl").open()]
-    section_to_subject = {sec.lower(): row for row in BLUEPRINT for sec in row[4]}
+    section_to_subject = {sec.lower(): name for name, (_, secs) in SUBJECTS.items() for sec in secs}
 
     chapter_hits: dict[str, Counter] = defaultdict(Counter)
     bank_counts: Counter = Counter()
     matched = 0
     for q in questions:
-        row = section_to_subject.get(q["chapter_code"].lower())
-        if row is None:
+        subject = section_to_subject.get(q["chapter_code"].lower())
+        if subject is None:
             continue
-        subject, groups = row[1], row[3]
+        groups = SUBJECTS[subject][0]
         bank_counts[subject] += 1
         candidates = [i for g in groups for i in by_group.get(g, [])]
         if not candidates:
@@ -100,44 +142,43 @@ def main() -> None:
 
     lines = [
         "// GENERATED by tools/ingest/analyze_pyq.py. Do not edit by hand.",
-        "// Marks: B Certificate paper 2024, KAR & GOA NCC Directorate (Army SD/SW).",
         f"// High-yield chapters: {matched} bank and paper questions matched to précis chapters.",
         "",
         "import 'insights.dart';",
         "",
-        "const bCertInsights = ExamInsights(",
-        "  exam: 'B Certificate',",
-        "  source: 'B Cert paper 2024 · KAR & GOA Directorate · Army SD/SW',",
-        "  totalMarks: 350,",
-        "  questionCount: 175,",
-        "  durationMinutes: 180,",
-        "  passRule: '33% in each paper and in aggregate',",
-        f"  questionsAnalysed: {matched},",
-        "  subjects: [",
     ]
-    for paper, subject, marks, groups, sections, note in BLUEPRINT:
-        hits = chapter_hits.get(subject, Counter())
-        total = sum(hits.values())
-        top = [(code, n) for code, n in hits.most_common(5) if total and n / total >= 0.08]
-        lines.append(
-            f"    SubjectInsight(paper: ExamPaper.{paper}, name: {dart_str(subject)}, marks: {marks}, "
-            f"groupCodes: [{', '.join(dart_str(g) for g in groups)}], bankQuestions: {bank_counts[subject]}, "
-            f"bankSections: [{', '.join(dart_str(x) for x in sections)}], "
-            f"note: {dart_str(note)}, topChapters: ["
-        )
-        for code, n in top:
-            lines.append(f"      ChapterShare(code: {dart_str(code)}, title: {dart_str(titles.get(code, code))}, "
-                         f"share: {n / total:.2f}),")
-        lines.append("    ]),")
-    lines += ["  ],", ");", ""]
+    for const, spec in EXAMS.items():
+        lines += [
+            f"const {const} = ExamInsights(",
+            f"  exam: {dart_str(spec['exam'])},",
+            f"  source: {dart_str(spec['source'])},",
+            "  totalMarks: 350,",
+            "  questionCount: 175,",
+            "  durationMinutes: 180,",
+            "  passRule: '33% in each paper and in aggregate',",
+            f"  negativeMarks: {spec['negative']},",
+            f"  negativeNote: {dart_str(spec['negative_note'])},",
+            f"  questionsAnalysed: {matched},",
+            "  subjects: [",
+        ]
+        for paper, subject, marks, note in spec["marks"]:
+            groups, sections = SUBJECTS[subject]
+            hits = chapter_hits.get(subject, Counter())
+            total = sum(hits.values())
+            top = [(code, n) for code, n in hits.most_common(5) if total and n / total >= 0.08]
+            lines.append(
+                f"    SubjectInsight(paper: ExamPaper.{paper}, name: {dart_str(subject)}, marks: {marks}, "
+                f"groupCodes: [{', '.join(dart_str(g) for g in groups)}], bankQuestions: {bank_counts[subject]}, "
+                f"bankSections: [{', '.join(dart_str(x) for x in sections)}], note: {dart_str(note)}, topChapters: ["
+            )
+            for code, n in top:
+                lines.append(f"      ChapterShare(code: {dart_str(code)}, title: {dart_str(titles.get(code, code))}, "
+                             f"share: {n / total:.2f}),")
+            lines.append("    ]),")
+        lines += ["  ],", ");", ""]
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text("\n".join(lines))
-    print(f"Wrote {args.out}: {len(BLUEPRINT)} subjects; {matched} of {len(questions)} questions matched to chapters")
-    for paper, subject, marks, *_ in BLUEPRINT:
-        hits = chapter_hits.get(subject, Counter())
-        total = sum(hits.values()) or 1
-        top = ", ".join(f"{c} {titles.get(c, c)[:28]} {n * 100 // total}%" for c, n in hits.most_common(3))
-        print(f"  {paper:7} {marks:3}  {subject:38} {top}")
+    print(f"Wrote {args.out}: {len(EXAMS)} exams; {matched} of {len(questions)} questions matched to chapters")
 
 
 if __name__ == "__main__":

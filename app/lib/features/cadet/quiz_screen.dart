@@ -58,7 +58,7 @@ class _QuizScreenState extends ConsumerState<QuizScreen> {
       }
       _title = 'Full ${insights.exam} mock';
       _questions = picked;
-      _marking = const MarkingScheme();
+      _marking = MarkingScheme(correct: 2, wrong: insights.negativeMarks);
       _limit = Duration(minutes: (insights.durationMinutes * picked.length / insights.questionCount).ceil().clamp(1, 600));
     } else if (widget.testId.startsWith('subject:')) {
       final name = widget.testId.substring('subject:'.length);
