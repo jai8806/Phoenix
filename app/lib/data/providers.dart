@@ -388,9 +388,11 @@ class PrecisState {
   /// Figures from the précis, by chapter and page.
   final List<PrecisFigure> figures;
 
-  List<PrecisFigure> figuresFor(String chapterCode, {int? fromPage, int? toPage}) => [
+  /// Figures for a chapter of [book] (chapter codes repeat across books, e.g. "AF I").
+  List<PrecisFigure> figuresFor(String chapterCode, {String? book, int? fromPage, int? toPage}) => [
         for (final f in figures)
           if (f.chapterCode == chapterCode &&
+              (book == null || f.title == book) &&
               (fromPage == null || (f.page != null && f.page! >= fromPage && f.page! <= (toPage ?? fromPage))))
             f,
       ];
@@ -400,6 +402,21 @@ class PrecisState {
   final bool refreshing;
 
   int get passageCount => search?.passages.length ?? 0;
+
+  /// Books in the downloaded précis, in the order they were loaded.
+  List<String> get books => {for (final p in search?.passages ?? const <PrecisPassage>[]) p.title}.toList();
+
+  /// (code, title, passage count) for each chapter of [book], in book order.
+  List<(String, String, int)> chaptersOf(String book) {
+    final out = <String, (String, int)>{};
+    for (final p in search?.passages ?? const <PrecisPassage>[]) {
+      if (p.title != book) continue;
+      final parts = p.heading.split(' · ');
+      final (title, n) = out[parts.first] ?? (parts.length > 1 ? parts[1] : parts.first, 0);
+      out[parts.first] = (title, n + 1);
+    }
+    return [for (final e in out.entries) (e.key, e.value.$1, e.value.$2)];
+  }
 }
 
 /// Downloads the précis once, keeps it on the phone, and refreshes it in the

@@ -134,6 +134,7 @@ class _LearnScreenState extends ConsumerState<LearnScreen> {
           ListCard(children: [
             for (final test in tests) _TestTile(test: test, now: now),
           ]),
+        const _PrecisBooks(),
         const SectionHeader('Study library'),
         const StudyLibraryCard(),
         SectionHeader('Study material · ${wing.label}'),
@@ -377,5 +378,31 @@ class StudyLibraryCard extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// Every précis book on the phone, to read chapter by chapter.
+class _PrecisBooks extends ConsumerWidget {
+  const _PrecisBooks();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final precis = ref.watch(precisProvider);
+    final books = precis.books;
+    if (books.isEmpty) return const SizedBox.shrink();
+    final c = Theme.of(context).colorScheme;
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      const SectionHeader('Read the précis'),
+      ListCard(children: [
+        for (final b in books)
+          ListTile(
+            leading: Icon(b.contains('Oct 2025') ? Icons.auto_stories : Icons.menu_book_outlined, color: c.primary),
+            title: Text(b),
+            subtitle: Text('${precis.chaptersOf(b).length} chapters${b.contains('Oct 2025') ? ' · revised syllabus' : ''}'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => context.push(Routes.book(b)),
+          ),
+      ]),
+    ]);
   }
 }

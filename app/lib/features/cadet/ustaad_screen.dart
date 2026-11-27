@@ -192,7 +192,7 @@ class _UstaadScreenState extends ConsumerState<UstaadScreen> {
                           final top = m.precis!.passages.first;
                           return _PrecisBubble(
                             answer: m.precis!,
-                            figures: precis.figuresFor(top.heading.split(' · ').first,
+                            figures: precis.figuresFor(top.heading.split(' · ').first, book: top.title,
                                 fromPage: top.page, toPage: top.pageEnd ?? top.page),
                             onExplain: ref.watch(isLiveProvider) && !_thinking ? () => _explain(m.question!) : null,
                           );

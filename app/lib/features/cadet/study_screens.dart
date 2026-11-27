@@ -200,19 +200,29 @@ class SubjectScreen extends ConsumerWidget {
 // Chapter reader
 // ---------------------------------------------------------------------------
 class ChapterScreen extends ConsumerWidget {
-  const ChapterScreen({super.key, required this.code});
+  const ChapterScreen({super.key, required this.code, this.book});
 
   final String code;
+
+  /// Chapter codes repeat across books ("AF I" is in the JD/JW and SD/SW books).
+  final String? book;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final precis = ref.watch(precisProvider);
     final t = Theme.of(context).textTheme;
     final c = Theme.of(context).colorScheme;
-    final passages = <PrecisPassage>[
+    final all = <PrecisPassage>[
       for (final p in precis.search?.passages ?? const <PrecisPassage>[])
         if (p.heading.startsWith('$code · ')) p,
     ];
+    final senior = ref.watch(authControllerProvider)?.division?.isSenior ?? true;
+    final books = {for (final p in all) p.title};
+    final chosen = book ??
+        (books.length < 2
+            ? null
+            : books.firstWhere((b) => b.contains(senior ? 'SD/SW' : 'JD/JW'), orElse: () => books.first));
+    final passages = [for (final p in all) if (chosen == null || p.title == chosen) p];
     final title = passages.isEmpty ? code : passages.first.heading.split(' · ')[1];
 
     Widget body;
@@ -252,9 +262,9 @@ class ChapterScreen extends ConsumerWidget {
         const SizedBox(height: Space.xs),
         Text('${passages.first.title} · p. ${passages.first.page ?? '–'}–${passages.last.pageEnd ?? passages.last.page ?? '–'}',
             style: t.bodySmall?.copyWith(color: c.onSurfaceVariant)),
-        if (precis.figuresFor(code).isNotEmpty) ...[
-          SectionHeader('Figures (${precis.figuresFor(code).length})'),
-          FigureStrip(figures: precis.figuresFor(code)),
+        if (precis.figuresFor(code, book: passages.first.title).isNotEmpty) ...[
+          SectionHeader('Figures (${precis.figuresFor(code, book: passages.first.title).length})'),
+          FigureStrip(figures: precis.figuresFor(code, book: passages.first.title)),
         ],
         const SizedBox(height: Space.lg),
         for (final p in passages) ...[
@@ -499,4 +509,37 @@ void showRevisionTips(BuildContext context) {
       );
     },
   );
+}
+
+/// Every chapter of one précis book, for browsing.
+class BookScreen extends ConsumerWidget {
+  const BookScreen({super.key, required this.title});
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final precis = ref.watch(precisProvider);
+    final chapters = precis.chaptersOf(title);
+    return Scaffold(
+      appBar: AppBar(title: Text(title)),
+      body: chapters.isEmpty
+          ? const EmptyState(
+              icon: Icons.menu_book_outlined,
+              title: 'Not downloaded yet',
+              message: 'Open Ustaad once while online to download the study material.')
+          : PageBody(children: [
+              ListCard(children: [
+                for (final (code, name, n) in chapters)
+                  ListTile(
+                    leading: SizedBox(width: 56, child: Text(code, style: Theme.of(context).textTheme.labelLarge)),
+                    title: Text(name),
+                    subtitle: Text('$n passage${n == 1 ? '' : 's'}'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => context.push(Routes.chapter(code, book: title)),
+                  ),
+              ]),
+            ]),
+    );
+  }
 }

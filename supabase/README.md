@@ -48,6 +48,10 @@ Check it locally: `psql -d phoenix_check -f migrations/20261127010000_hosted_tes
    top level of the bucket, keeping the folder names. Figures not uploaded
    yet show a placeholder in the app.
 
+Later books load the same way, each replacing only its own rows: for example
+`python3 tools/ingest/figures.py sql army_sdsw_oct2025 --out content/build/figures_oct2025.sql`,
+then upload that book's folder.
+
 ## Turn on Ustaad (free, with Gemini)
 
 1. Get a free API key at **aistudio.google.com** → *Get API key* (no card

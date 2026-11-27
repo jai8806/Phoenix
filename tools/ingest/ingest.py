@@ -53,6 +53,9 @@ def main() -> None:
     ap.add_argument("--layout", choices=["jdjw", "sdsw", "slides"], default="jdjw",
                     help="jdjw: 2025 JD/JW format (master index, MCQs); sdsw: SD/SW unit format (no MCQs); "
                          "slides: a lecture deck, one passage per slide title")
+    ap.add_argument("--prefixes", default="",
+                    help="comma-separated subject codes, in book order, for books whose headings say only "
+                         '"CHAPTER II" (the next code starts each time the numbering restarts at I)')
     ap.add_argument("--code", default="", help="slides: lesson code, e.g. H-5")
     ap.add_argument("--chapter", default="", help="slides: lesson title, e.g. Basics of First Aid")
     args = ap.parse_args()
@@ -73,7 +76,8 @@ def main() -> None:
         borrowed = json.loads(args.index_from.read_text())
         index = [IndexEntry(**{k: v for k, v in s.items() if k != "total_periods"}) for s in borrowed["subjects"]]
         groups = borrowed["groups"]
-    chapters = split_chapters(pages, index, continues=args.continues)
+    chapters = split_chapters(pages, index, continues=args.continues,
+                              prefixes=[p.strip() for p in args.prefixes.split(',') if p.strip()] or None)
 
     doc = {"title": args.title, "wing": args.wing, "level": args.level, "edition": args.edition,
            "source_file": args.pdf.name}

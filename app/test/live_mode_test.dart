@@ -566,6 +566,23 @@ void main() {
     expect(c.read(authControllerProvider)!.displayName, 'CPL Meera Nair');
   });
 
+  testWidgets('a chapter code shared by two books shows only its own book and figures', (tester) async {
+    final repo = _TwoBooksRepo();
+    final (c, _) = await pumpLive(tester, cadet, repo: repo, size: const Size(420, 1600));
+    await tester.tap(find.text('Ustaad'));
+    await tester.pumpAndSettle(); // downloads the précis
+    expect(c.read(precisProvider).books, containsAll(['Demo Army Book', 'Army SD/SW (Oct 2025)']));
+    expect(c.read(precisProvider).figuresFor('AF I', book: 'Army SD/SW (Oct 2025)').single.id, 'f9');
+
+    c.read(routerProvider).push(Routes.book('Army SD/SW (Oct 2025)'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Armed Forces Revised'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Commands of the Army'), findsOneWidget);
+    expect(find.textContaining('responsibility for national defence'), findsNothing);
+    expect(find.text('FIGURES (1)'), findsOneWidget);
+  });
+
   group('row mapping', () {
     test('tests and attempts map from database rows', () {
       final t = testFromRow({
@@ -656,4 +673,19 @@ extension on AppUser {
   AppUser copyForTest({required bool isSample}) => AppUser(
         id: id, fullName: fullName, role: role, rank: rank, wing: wing, division: division,
         unitName: unitName, unitId: unitId, isSample: isSample);
+}
+
+class _TwoBooksRepo extends FakeUnitRepo {
+  @override
+  Future<List<PrecisPassage>> precisPassages() async => [
+        ...FakeUnitRepo.demoPassages,
+        const PrecisPassage(id: 9, title: 'Army SD/SW (Oct 2025)', heading: 'AF I · Armed Forces Revised', page: 4,
+            content: 'Commands of the Army are headed by an Army Commander.'),
+      ];
+
+  @override
+  Future<List<PrecisFigure>> figures() async => [
+        ...FakeUnitRepo.demoFigures,
+        const PrecisFigure(id: 'f9', title: 'Army SD/SW (Oct 2025)', chapterCode: 'AF I', page: 4, path: 'x/f9.webp'),
+      ];
 }

@@ -197,3 +197,29 @@ subject pages are missing, so 163 of the 350 questions load. They load as
 The app's Learn tab links to the compiled Drive folder (all précis, past
 papers, question banks and notes). Change it at build time with
 `--dart-define=STUDY_LIBRARY_URL=...`.
+
+## Revised Army SD/SW précis (17 Oct 2025)
+
+Four books from the compiled Drive folder (`C_Cert/01_Syllabus/Army_Senior/`),
+downloaded straight from Drive (the folder is link-shared):
+
+| Book | Pages | Chapters | Passages | Draft MCQs | Figures |
+|---|---|---|---|---|---|
+| Special Subject (Army) SD/SW (Oct 2025) | 438 | 32 | 446 | 246 | 357 |
+| Tech Skills SD/SW (Oct 2025) | 296 | 29 | 267 | 347 | 246 |
+| NB & CP SD/SW (Oct 2025) | 718 | 37 | 914 | 279 | 477 |
+| Life Skills SD/SW (Oct 2025) | 472 | 27 | 539 | 392 | 408 |
+
+They use the JD/JW layout. NB & CP headings say only "CHAPTER II", so its
+subject codes come from the master index:
+
+```bash
+python3 tools/ingest/ingest.py content/sources/revised_sdsw/nbcp_sdsw_oct2025.pdf --wing common --level senior \
+    --title "NB & CP SD/SW" --edition "Oct 2025" --prefixes NCC,NI,BCA,DM,EA,GA,LWN,MH,SSCD
+```
+
+The earlier SD/SW books stay loaded: the 2026 B Cert paper still asks from
+the old syllabus (Military History, for example). Chapter codes repeat across
+books ("AF I" is in the JD/JW and SD/SW books), so the app matches chapters and
+figures by book as well as code. Figure folder names map to document titles in
+`BOOK_TITLES` in `tools/ingest/figures.py`; they must match exactly.

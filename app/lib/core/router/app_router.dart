@@ -41,7 +41,10 @@ abstract final class Routes {
   static const plan = '/study-plan';
   static const editProfile = '/profile/edit';
   static String subject(String name) => '/subject?name=${Uri.encodeQueryComponent(name)}';
-  static String chapter(String code) => '/chapter?code=${Uri.encodeQueryComponent(code)}';
+  /// A chapter of one book; without [book], the book for the cadet's division is picked.
+  static String chapter(String code, {String? book}) =>
+      '/chapter?code=${Uri.encodeQueryComponent(code)}${book == null ? '' : '&book=${Uri.encodeQueryComponent(book)}'}';
+  static String book(String title) => '/book?title=${Uri.encodeQueryComponent(title)}';
 
   static const overview = '/command/overview';
   static const cadets = '/command/cadets';
@@ -111,7 +114,11 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(path: Routes.plan, builder: (_, _) => const StudyPlanScreen()),
       GoRoute(path: Routes.editProfile, builder: (_, _) => const EditProfileScreen()),
       GoRoute(path: '/subject', builder: (_, s) => SubjectScreen(name: s.uri.queryParameters['name'] ?? '')),
-      GoRoute(path: '/chapter', builder: (_, s) => ChapterScreen(code: s.uri.queryParameters['code'] ?? '')),
+      GoRoute(
+        path: '/chapter',
+        builder: (_, s) => ChapterScreen(code: s.uri.queryParameters['code'] ?? '', book: s.uri.queryParameters['book']),
+      ),
+      GoRoute(path: '/book', builder: (_, s) => BookScreen(title: s.uri.queryParameters['title'] ?? '')),
       GoRoute(path: Routes.calendar, builder: (_, _) => const CalendarScreen(editable: false)),
       GoRoute(path: Routes.announcements, builder: (_, _) => const AnnouncementsScreen(editable: false)),
       GoRoute(

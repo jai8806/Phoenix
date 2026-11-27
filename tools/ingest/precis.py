@@ -215,16 +215,21 @@ def _split_kinds(kinds: list[str], total: int) -> tuple[int, int]:
 # Chapters and passages
 # ---------------------------------------------------------------------------
 
-_CHAPTER = re.compile(rf"CHAPTER\s+(?P<code>[A-Z]+\s+{ROMAN})\s*:\s*(?P<title>.+)")
+# "CHAPTER AF I: TITLE", "CHAPTER MR-VII: TITLE", "CHAPTER MR-VIII - TITLE", and the odd "CHAPTER XI: TITLE".
+_CHAPTER = re.compile(rf"CHAPTER[\s-]+(?P<code>(?:[A-Z]+[\s-]+)?(?:{ROMAN}|[1-9]\b))\s*(?::|\s[-–]\s)\s*(?P<title>.+)")
 _SECTION = re.compile(r"^(?:PART\s+[IVX]+\s*[:\-–]\s*.+|INTRODUCTION|CONCLUSION|SUMMARY)\s*$")
 _NOISE = re.compile(r"^(?:[A-Z &()/]+\((?:JD/JW|SD/SW)\)|DID YOU KNOW\?)$")
 
 
-_INDEX_PAGE = re.compile(r"SUBJECT (?:CODE AND CONTENT|OF CONTENT)|CHAPTER WISE INDEX|MASTER INDEX")
+_INDEX_PAGE = re.compile(r"SUBJECT (?:CODE AND CONTENT|OF CONTENT)|CHAPTER[ -]?WISE INDEX|MASTER INDEX|SUBJECT PAGE NO"
+                         r"|(?i:\bcontent\s+page\s+no)")
+# Chapter openings without the word CHAPTER: "MWE –III: MODERN TRENDS ... (SD SW)".
+_CHAPTER_BARE = re.compile(rf"^(?P<code>[A-Z]{{2,5}}\s*[-–]\s*{ROMAN})\s*:\s*(?P<title>.+?)\s*\((?:SD\s*/?\s*SW|JD\s*/?\s*JW)\)\s*$",
+                           re.M)
 
 
 def split_chapters(pages: list[Page], index: list[IndexEntry] | None = None,
-                   continues: str | None = None) -> list[Chapter]:
+                   continues: str | None = None, prefixes: list[str] | None = None) -> list[Chapter]:
     """Group pages by chapter. Titles come from the index when available,
     because chapter headings can wrap across lines.
 
@@ -233,14 +238,27 @@ def split_chapters(pages: list[Page], index: list[IndexEntry] | None = None,
     """
     titles = {e.code.replace("-", " "): e.title for e in index or []}
     chapters: list[Chapter] = []
+    # Books whose headings say only "CHAPTER II": subject codes in book order,
+    # moving to the next one each time the numbering restarts at I.
+    pending = list(prefixes or [])
+    current = ""
     if continues:
         chapters.append(Chapter(continues, titles.get(continues, continues)))
     for page in pages:
         if _INDEX_PAGE.search(page.text):
             continue  # chapter-wise index pages list every chapter heading
-        m = _CHAPTER.search(page.text)
-        if m:
-            code = " ".join(m.group("code").split())
+        m = _CHAPTER.search(page.text) or _CHAPTER_BARE.search(page.text)
+        parts = m.group("code").replace("-", " ").replace("–", " ").split() if m else []
+        if parts:
+            if parts[-1].isdigit():  # "IC 1" -> "IC I"
+                parts[-1] = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX"][int(parts[-1])]
+            code = " ".join(parts)
+            if len(parts) == 1 and prefixes is not None:
+                if (code == "I" or not current) and pending:
+                    current = pending.pop(0)
+                code = f"{current} {code}"
+            elif len(parts) == 1 and chapters:  # "CHAPTER XI" inside the MR chapters
+                code = f"{chapters[-1].code.split()[0]} {code}"
             chapters.append(Chapter(code, titles.get(code, smart_title(m.group("title").strip()))))
         if chapters:
             chapters[-1].pages.append(page)
