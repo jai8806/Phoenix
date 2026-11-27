@@ -1,0 +1,17 @@
+[
+  {"q": "what is a bearing in map reading", "any": ["angle", "clockwise"]},
+  {"q": "what is a conventional sign", "any": ["symbol", "sign"]},
+  {"q": "what is dead ground", "any": ["cannot be seen", "not visible", "hidden", "observ"]},
+  {"q": "what is resection", "any": ["position", "own position", "bearing"]},
+  {"q": "who is the chief of army staff", "any": ["chief of army staff", "coas", "general"]},
+  {"q": "how many commands does the indian army have", "any": ["seven", "7"]},
+  {"q": "what is the weight of insas rifle", "any": ["kg"]},
+  {"q": "what is a group in firing", "any": ["shots", "group"]},
+  {"q": "what is a fracture", "any": ["bone", "break"]},
+  {"q": "treatment for snake bite", "any": ["bite", "immobil", "hospital", "calm"]},
+  {"q": "what is disaster management", "any": ["disaster"]},
+  {"q": "what is global warming", "any": ["temperature", "greenhouse", "warming"]},
+  {"q": "what is rainwater harvesting", "any": ["rain", "collect", "store"]},
+  {"q": "what are fundamental duties", "any": ["duties", "constitution", "51"]},
+  {"q": "what is the honour code of ncc", "any": ["honour"]}
+]

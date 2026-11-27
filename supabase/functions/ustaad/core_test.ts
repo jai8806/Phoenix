@@ -3,6 +3,8 @@ import {
   answerQuestion,
   buildUserPrompt,
   citedSources,
+  mergePassages,
+  SYSTEM_PROMPT,
   ConfigError,
   ModelError,
   modelConfig,
@@ -50,7 +52,7 @@ Deno.test("Gemini call sends key in header and system instruction, returns cited
   assertStringIncludes(seen.url, "/models/gemini-3.5-flash-lite:generateContent");
   assert(!seen.url.includes("test-key"), "key must not be in the URL");
   assertEquals(seen.headers["x-goog-api-key"], "test-key");
-  assertStringIncludes(seen.body.systemInstruction.parts[0].text, "Answer ONLY from the numbered");
+  assertStringIncludes(seen.body.systemInstruction.parts[0].text, "using ONLY the checked facts and the numbered");
 });
 
 Deno.test("model saying NOT_COVERED gives the friendly not-covered answer", async () => {
@@ -94,4 +96,31 @@ Deno.test("missing key is a configuration error; Gemini is the default", () => {
   }
   assert(threw);
   assertEquals(modelConfig((k) => (k === "GEMINI_API_KEY" ? "g" : undefined)).model, "gemini-3.5-flash-lite");
+});
+
+Deno.test("checked facts go into the prompt ahead of the passages", () => {
+  const prompt = buildUserPrompt("who is dg ncc", passages, ["**Lt Gen Virendra Vats** is DG NCC."]);
+  assert(prompt.startsWith("Checked facts:\n* **Lt Gen Virendra Vats** is DG NCC."));
+  assert(prompt.indexOf("Checked facts") < prompt.indexOf("Précis passages"));
+});
+
+Deno.test("a checked fact alone is enough to call the model", async () => {
+  let called = false;
+  const fake = (async () => {
+    called = true;
+    return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "Lt Gen Virendra Vats heads the NCC." }] } }] }));
+  }) as unknown as typeof fetch;
+  const r = await answerQuestion("who is dg ncc", [], { provider: "gemini", apiKey: "k", model: "m" }, fake, ["Lt Gen Virendra Vats is DG NCC."]);
+  assert(called);
+  assertEquals(r.covered, true);
+});
+
+Deno.test("passages the app showed come first and are not repeated", () => {
+  const merged = mergePassages([passages[1]], [passages[0], passages[1]], 4);
+  assertEquals(merged.map((p) => p.chunk_id), [passages[1].chunk_id, passages[0].chunk_id]);
+});
+
+Deno.test("prompt asks for simple English and flat bullets", () => {
+  assert(SYSTEM_PROMPT.includes("simple English"));
+  assert(SYSTEM_PROMPT.includes("No nested points"));
 });

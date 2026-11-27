@@ -26,7 +26,9 @@ abstract interface class UnitRepository {
 
   Future<List<KnowledgeDocument>> documents();
 
-  Future<UstaadReply> askUstaad(String question);
+  /// The AI's plain explanation. [chunkIds] are the précis passages the app
+  /// already found and [facts] any checked quick fact, so both answers agree.
+  Future<UstaadReply> askUstaad(String question, {List<int> chunkIds = const [], List<String> facts = const []});
 
   /// Every précis passage this member may read, for offline search.
   Future<List<PrecisPassage>> precisPassages();
@@ -393,9 +395,14 @@ class SupabaseUnitRepository implements UnitRepository {
       }, 'update the cadet');
 
   @override
-  Future<UstaadReply> askUstaad(String question) async {
+  Future<UstaadReply> askUstaad(String question, {List<int> chunkIds = const [], List<String> facts = const []}) async {
     try {
-      final res = await _client.functions.invoke('ustaad', body: {'question': question});
+      final res = await _client.functions.invoke('ustaad', body: {
+        'question': question,
+        'mode': 'simple',
+        if (chunkIds.isNotEmpty) 'chunk_ids': chunkIds.take(6).toList(),
+        if (facts.isNotEmpty) 'facts': facts.take(2).toList(),
+      });
       return UstaadReply.fromJson(Map<String, dynamic>.from(res.data as Map));
     } on FunctionException catch (e) {
       throw UnitDataFailure(ustaadErrorMessage(e.status, e.details));

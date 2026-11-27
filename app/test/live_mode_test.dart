@@ -176,7 +176,7 @@ class FakeUnitRepo implements UnitRepository {
       memberUpdates.add((id, role, rank));
 
   @override
-  Future<UstaadReply> askUstaad(String question) async {
+  Future<UstaadReply> askUstaad(String question, {List<int> chunkIds = const [], List<String> facts = const []}) async {
     aiCalls++;
     return const UstaadReply(
         answer: 'The President of India is the Supreme Commander [1].',
@@ -343,7 +343,8 @@ void main() {
     await tester.tap(find.text('Ustaad'));
     await tester.pumpAndSettle();
     await ask(tester, 'what is magnetic north');
-    expect(find.text('(b) Magnetic north is shown by the compass needle.'), findsOneWidget);
+    expect(find.text('(b)'), findsOneWidget); // the list marker, shown on its own
+    expect(find.textContaining('Magnetic north is shown by the compass needle.', findRichText: true), findsOneWidget);
   });
 
   testWidgets('first launch offline explains the download failed and offers retry', (tester) async {
@@ -583,6 +584,30 @@ void main() {
     expect(find.text('FIGURES (1)'), findsOneWidget);
   });
 
+  testWidgets('quick facts answer what the précis gets wrong, with when they were checked', (tester) async {
+    await pumpLive(tester, cadet, size: const Size(420, 1400));
+    await tester.tap(find.text('Ustaad'));
+    await tester.pumpAndSettle();
+    await ask(tester, 'who is dg ncc');
+    expect(find.text('QUICK FACT'), findsOneWidget);
+    expect(find.textContaining('Lt Gen Virendra Vats', findRichText: true), findsOneWidget);
+    expect(find.textContaining('checked Nov 2026'), findsOneWidget);
+  });
+
+  testWidgets('Explain simply sends the passages already shown, and renders bullets and bold', (tester) async {
+    final repo = _ExplainRepo();
+    await pumpLive(tester, cadet, repo: repo, size: const Size(420, 1600));
+    await tester.tap(find.text('Ustaad'));
+    await tester.pumpAndSettle();
+    await ask(tester, 'what is magnetic north');
+    await tester.tap(find.text('Explain simply'));
+    await tester.pumpAndSettle();
+    expect(repo.lastChunkIds, contains(2));
+    expect(find.text('•'), findsWidgets);
+    expect(find.textContaining('**'), findsNothing);
+    expect(find.textContaining('Magnetic north', findRichText: true), findsWidgets);
+  });
+
   group('row mapping', () {
     test('tests and attempts map from database rows', () {
       final t = testFromRow({
@@ -688,4 +713,18 @@ class _TwoBooksRepo extends FakeUnitRepo {
         ...FakeUnitRepo.demoFigures,
         const PrecisFigure(id: 'f9', title: 'Army SD/SW (Oct 2025)', chapterCode: 'AF I', page: 4, path: 'x/f9.webp'),
       ];
+}
+
+class _ExplainRepo extends FakeUnitRepo {
+  List<int> lastChunkIds = const [];
+
+  @override
+  Future<UstaadReply> askUstaad(String question, {List<int> chunkIds = const [], List<String> facts = const []}) async {
+    lastChunkIds = chunkIds;
+    return const UstaadReply(
+      answer: '**Magnetic north** is where a compass needle points [1].\n- It moves slowly over time\n  * nested point\nRemember: compass = magnetic.',
+      covered: true,
+      sources: [UstaadSource(n: 1, title: 'Demo Map Book', heading: 'MR III · Types of North', pages: '185')],
+    );
+  }
 }

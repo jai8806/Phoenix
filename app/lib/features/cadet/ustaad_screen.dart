@@ -7,19 +7,21 @@ import '../../data/models/ustaad.dart';
 import '../../data/providers.dart';
 import '../../data/unit_repository.dart';
 import '../../domain/precis_search.dart';
+import '../../domain/quick_facts.dart';
 import '../shared/figures.dart';
+import '../shared/rich_answer.dart';
 
 class _Message {
   const _Message(this.text,
-      {required this.fromCadet, this.question, this.precis, this.sources = const [], this.isError = false, this.isAi = false});
+      {required this.fromCadet, this.question, this.answer, this.sources = const [], this.isError = false, this.isAi = false});
   final String text;
   final bool fromCadet;
 
   /// The question this reply answers (for "Explain simply").
   final String? question;
 
-  /// Lines taken straight from the précis.
-  final PrecisAnswer? precis;
+  /// A checked quick fact and lines taken straight from the précis.
+  final UstaadAnswer? answer;
   final List<UstaadSource> sources;
   final bool isError;
   final bool isAi;
@@ -82,9 +84,10 @@ class _UstaadScreenState extends ConsumerState<UstaadScreen> {
         case PrecisStatus.error:
           _messages.add(_Message(precis.error ?? "Couldn't load the study material.", fromCadet: false, isError: true));
         case PrecisStatus.ready:
-          final answer = precis.search!.answer(question);
+          final senior = ref.read(authControllerProvider)?.division?.isSenior ?? true;
+          final answer = askUstaad(question, precis.search!, preferSenior: senior);
           _messages.add(answer.found
-              ? _Message('', fromCadet: false, question: question, precis: answer)
+              ? _Message('', fromCadet: false, question: question, answer: answer)
               : const _Message(
                   "That isn't in your précis. Try the words the book uses, e.g. \"types of north\" or "
                   '"judging distance".',
@@ -94,13 +97,18 @@ class _UstaadScreenState extends ConsumerState<UstaadScreen> {
     _toBottom();
   }
 
-  Future<void> _explain(String question) async {
+  Future<void> _explain(String question, UstaadAnswer answer) async {
     final repo = ref.read(unitRepositoryProvider);
     if (repo == null || _thinking) return;
     setState(() => _thinking = true);
     _toBottom();
     try {
-      final reply = await repo.askUstaad(question);
+      // The AI explains what Ustaad already found, so both agree.
+      final reply = await repo.askUstaad(
+        question,
+        chunkIds: [for (final p in answer.precis.passages) p.id],
+        facts: [if (answer.fact != null) answer.fact!.answer],
+      );
       if (!mounted) return;
       setState(() => _messages.add(_Message(reply.answer, fromCadet: false, sources: reply.sources, isAi: true)));
     } catch (e) {
@@ -188,14 +196,21 @@ class _UstaadScreenState extends ConsumerState<UstaadScreen> {
                       itemBuilder: (_, i) {
                         if (i == _messages.length) return const _Thinking();
                         final m = _messages[i];
-                        if (m.precis != null) {
-                          final top = m.precis!.passages.first;
-                          return _PrecisBubble(
-                            answer: m.precis!,
-                            figures: precis.figuresFor(top.heading.split(' · ').first, book: top.title,
-                                fromPage: top.page, toPage: top.pageEnd ?? top.page),
-                            onExplain: ref.watch(isLiveProvider) && !_thinking ? () => _explain(m.question!) : null,
-                          );
+                        final a = m.answer;
+                        if (a != null) {
+                          final explain = ref.watch(isLiveProvider) && !_thinking ? () => _explain(m.question!, a) : null;
+                          final top = a.precis.passages.isEmpty ? null : a.precis.passages.first;
+                          return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            if (a.fact != null) _FactBubble(fact: a.fact!, onExplain: a.precis.found ? null : explain),
+                            if (top != null && a.precis.found)
+                              _PrecisBubble(
+                                answer: a.precis,
+                                compact: a.fact != null,
+                                figures: precis.figuresFor(top.heading.split(' · ').first, book: top.title,
+                                    fromPage: top.page, toPage: top.pageEnd ?? top.page),
+                                onExplain: explain,
+                              ),
+                          ]);
                         }
                         return _Bubble(m);
                       },
@@ -233,9 +248,12 @@ class _UstaadScreenState extends ConsumerState<UstaadScreen> {
 
 /// Lines quoted from the précis, the full passage on demand, and "Explain simply".
 class _PrecisBubble extends StatefulWidget {
-  const _PrecisBubble({required this.answer, required this.onExplain, this.figures = const []});
+  const _PrecisBubble({required this.answer, required this.onExplain, this.figures = const [], this.compact = false});
 
   final PrecisAnswer answer;
+
+  /// Shown under a quick fact: titled "Also in your précis".
+  final bool compact;
   final List<PrecisFigure> figures;
   final VoidCallback? onExplain;
 
@@ -266,11 +284,12 @@ class _PrecisBubbleState extends State<_PrecisBubble> {
           Row(children: [
             Icon(Icons.menu_book_outlined, size: 16, color: c.primary),
             const SizedBox(width: Space.xs),
-            Text('FROM YOUR PRÉCIS', style: t.labelSmall?.copyWith(color: c.primary, letterSpacing: 1.1)),
+            Text(widget.compact ? 'ALSO IN YOUR PRÉCIS' : 'FROM YOUR PRÉCIS',
+                style: t.labelSmall?.copyWith(color: c.primary, letterSpacing: 1.1)),
           ]),
           const SizedBox(height: Space.sm),
           for (final s in widget.answer.snippets) ...[
-            SelectableText(s.text, style: t.bodyMedium),
+            RichAnswer(s.text, style: t.bodyMedium),
             Padding(
               padding: const EdgeInsets.only(top: 2, bottom: Space.sm),
               child: Text(s.passage.citation, style: t.bodySmall?.copyWith(color: c.onSurfaceVariant)),
@@ -303,6 +322,51 @@ class _PrecisBubbleState extends State<_PrecisBubble> {
                 label: const Text('Explain simply'),
               ),
           ]),
+        ]),
+      ),
+    );
+  }
+}
+
+/// A short checked answer, for facts the précis lacks or that change.
+class _FactBubble extends StatelessWidget {
+  const _FactBubble({required this.fact, this.onExplain});
+
+  final QuickFact fact;
+  final VoidCallback? onExplain;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    final c = Theme.of(context).colorScheme;
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: Space.sm),
+        padding: const EdgeInsets.all(Space.lg),
+        constraints: const BoxConstraints(maxWidth: 600),
+        decoration: BoxDecoration(
+          color: c.primaryContainer.withValues(alpha: 0.55),
+          borderRadius: BorderRadius.circular(Radii.lg),
+          border: Border(left: BorderSide(color: c.tertiary, width: 3)),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Wrap(crossAxisAlignment: WrapCrossAlignment.center, spacing: Space.xs, runSpacing: 2, children: [
+            Icon(Icons.verified_outlined, size: 16, color: c.tertiary),
+            Text('QUICK FACT', style: t.labelSmall?.copyWith(color: c.tertiary, letterSpacing: 1.1)),
+            if (fact.checked != null)
+              Text('· checked ${fact.checked}', style: t.labelSmall?.copyWith(color: c.onSurfaceVariant)),
+          ]),
+          const SizedBox(height: Space.sm),
+          RichAnswer(fact.answer, style: t.bodyMedium),
+          const SizedBox(height: Space.sm),
+          Text(fact.source, style: t.bodySmall?.copyWith(color: c.onSurfaceVariant)),
+          if (onExplain != null)
+            TextButton.icon(
+              onPressed: onExplain,
+              icon: const Icon(Icons.auto_awesome, size: 18),
+              label: const Text('Explain simply'),
+            ),
         ]),
       ),
     );
@@ -361,7 +425,10 @@ class _Bubble extends StatelessWidget {
             ]),
             const SizedBox(height: Space.xs),
           ],
-          SelectableText(message.text, style: t.bodyMedium?.copyWith(color: fg)),
+          if (message.isAi)
+            RichAnswer(message.text, style: t.bodyMedium?.copyWith(color: fg))
+          else
+            SelectableText(message.text, style: t.bodyMedium?.copyWith(color: fg)),
           if (message.sources.isNotEmpty) ...[
             const SizedBox(height: Space.sm),
             Text('SOURCES', style: t.labelSmall?.copyWith(color: c.onSurfaceVariant, letterSpacing: 1.1)),

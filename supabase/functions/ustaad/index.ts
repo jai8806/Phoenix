@@ -9,7 +9,7 @@
 //   USTAAD_DAILY_LIMIT  optional questions per cadet per day (default 50)
 
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { answerQuestion, ConfigError, ModelError, modelConfig, type Passage } from "./core.ts";
+import { answerQuestion, ConfigError, mergePassages, ModelError, modelConfig, type Passage } from "./core.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -28,8 +28,16 @@ Deno.serve(async (req) => {
   if (!auth) return json({ error: "Sign in to ask Ustaad." }, 401);
 
   let question = "";
+  let chunkIds: number[] = [];
+  let facts: string[] = [];
   try {
-    question = String((await req.json()).question ?? "").trim();
+    const body = await req.json();
+    question = String(body.question ?? "").trim();
+    // Passages the app already found and showed, and any checked quick fact.
+    chunkIds = (Array.isArray(body.chunk_ids) ? body.chunk_ids : [])
+      .map(Number).filter((n: number) => Number.isInteger(n) && n > 0).slice(0, 6);
+    facts = (Array.isArray(body.facts) ? body.facts : [])
+      .map((f: unknown) => String(f).slice(0, 1200)).filter((f: string) => f.trim()).slice(0, 2);
   } catch {
     return json({ error: "Send a JSON body with a question." }, 400);
   }
@@ -51,12 +59,30 @@ Deno.serve(async (req) => {
     return json({ error: `You've asked ${limit} questions today. Ustaad will be back tomorrow.` }, 429);
   }
 
-  const { data: passages, error: searchError } = await supabase.rpc("search_chunks", { q: question, match_count: 6 });
-  if (searchError) return json({ error: "Couldn't search the study material right now. Try again shortly." }, 502);
+  // The cadet's own token reads the chunks, so row-level security still applies.
+  let chosen: Passage[] = [];
+  if (chunkIds.length) {
+    const { data } = await supabase.from("document_chunks")
+      .select("id, page, page_end, heading, content, documents(title)").in("id", chunkIds);
+    const byId = new Map((data ?? []).map((r: Record<string, unknown>) => [r.id as number, r]));
+    chosen = chunkIds.map((id) => byId.get(id)).filter(Boolean).map((r) => ({
+      chunk_id: r!.id as number,
+      document_title: ((r!.documents as { title?: string } | null)?.title) ?? "Précis",
+      heading: r!.heading as string | null,
+      page: r!.page as number | null,
+      page_end: r!.page_end as number | null,
+      content: r!.content as string,
+    }));
+  }
+  const { data: searched, error: searchError } = await supabase.rpc("search_chunks", { q: question, match_count: 6 });
+  if (searchError && !chosen.length) {
+    return json({ error: "Couldn't search the study material right now. Try again shortly." }, 502);
+  }
+  const passages = mergePassages(chosen, (searched ?? []) as Passage[], chosen.length ? 4 : 6);
 
   try {
     const cfg = modelConfig((k) => Deno.env.get(k));
-    const result = await answerQuestion(question, (passages ?? []) as Passage[], cfg);
+    const result = await answerQuestion(question, passages, cfg, fetch, facts);
     await supabase.from("ustaad_log").insert({ user_id: userId, question, answered: result.covered });
     return json(result);
   } catch (e) {

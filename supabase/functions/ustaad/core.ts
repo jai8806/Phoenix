@@ -27,27 +27,50 @@ export interface Answer {
 export const NOT_COVERED =
   "I couldn't find this in your unit's study material. Ask your ANO, or try asking with words from the précis.";
 
-export const SYSTEM_PROMPT = `You are Ustaad, a study assistant for NCC (National Cadet Corps) cadets in India.
-Answer ONLY from the numbered précis passages provided. Rules:
-- Use only facts stated in the passages. Never add outside knowledge, even if you know it.
-- Cite the passages you used with their numbers in square brackets, e.g. [1] or [2][3].
-- If the passages do not contain the answer, reply exactly: NOT_COVERED
-- Be concise and clear for a student: a direct answer first, then short points if helpful.
-- Reply in the same language as the question (English or Hindi).
-- Do not give unsafe weapon-handling instructions beyond what the passages state, and remind cadets that live firing is only under a qualified instructor if weapons come up.`;
+export const SYSTEM_PROMPT = `You are Ustaad, a study assistant for NCC (National Cadet Corps) cadets in India preparing for the B and C Certificate exams.
+Explain the answer simply, using ONLY the checked facts and the numbered précis passages provided.
+
+Content rules:
+- Use only what the checked facts and passages state. Never add outside knowledge.
+- Checked facts are newer than the précis: when they disagree, follow the checked facts.
+- Answer exactly what was asked. If a passage is about something else, ignore it.
+- If neither the facts nor the passages answer the question, reply exactly: NOT_COVERED
+- Cite passages with their numbers at the end of the line they support, e.g. [1] or [2][3]. Do not cite checked facts.
+- Do not give weapon-handling instructions beyond the passages; live firing is only under a qualified instructor.
+
+Style rules:
+- Write in simple English, like a senior cadet explaining to a junior. Use Hindi only if the question is written in Hindi.
+- Start with a one-sentence direct answer.
+- Then at most 5 short points, each on its own line starting with "- ". No nested points.
+- Use **bold** only for key terms, names and numbers. No headings, no tables, no other markdown.
+- End with one line starting "Remember:" giving a memory tip, if one helps.
+- Keep it under 140 words.`;
 
 export function pagesLabel(p: Pick<Passage, "page" | "page_end">): string | null {
   if (p.page == null) return null;
   return p.page_end && p.page_end !== p.page ? `${p.page}–${p.page_end}` : `${p.page}`;
 }
 
-export function buildUserPrompt(question: string, passages: Passage[]): string {
+export function buildUserPrompt(question: string, passages: Passage[], facts: string[] = []): string {
   const blocks = passages.map((p, i) => {
     const pages = pagesLabel(p);
     const where = [p.document_title, p.heading, pages ? `p. ${pages}` : null].filter(Boolean).join(" · ");
     return `[${i + 1}] (${where})\n${p.content}`;
   });
-  return `Précis passages:\n\n${blocks.join("\n\n")}\n\nCadet's question: ${question}`;
+  const checked = facts.length ? `Checked facts:\n${facts.map((f) => `* ${f}`).join("\n")}\n\n` : "";
+  return `${checked}Précis passages:\n\n${blocks.join("\n\n")}\n\nCadet's question: ${question}`;
+}
+
+/** Puts the passages the app already showed first, then fills up from search, without repeats. */
+export function mergePassages(chosen: Passage[], searched: Passage[], max = 6): Passage[] {
+  const seen = new Set<number>();
+  const out: Passage[] = [];
+  for (const p of [...chosen, ...searched]) {
+    if (seen.has(p.chunk_id) || out.length >= max) continue;
+    seen.add(p.chunk_id);
+    out.push(p);
+  }
+  return out;
 }
 
 /** Keeps only the sources the answer actually cites, in citation order. */
@@ -127,9 +150,10 @@ export async function answerQuestion(
   passages: Passage[],
   cfg: ModelConfig,
   fetcher: Fetch = fetch,
+  facts: string[] = [],
 ): Promise<Answer> {
-  if (passages.length === 0) return { answer: NOT_COVERED, sources: [], covered: false };
-  const text = await callModel(cfg, SYSTEM_PROMPT, buildUserPrompt(question, passages), fetcher);
+  if (passages.length === 0 && facts.length === 0) return { answer: NOT_COVERED, sources: [], covered: false };
+  const text = await callModel(cfg, SYSTEM_PROMPT, buildUserPrompt(question, passages, facts), fetcher);
   if (!text || text.includes("NOT_COVERED")) return { answer: NOT_COVERED, sources: [], covered: false };
   return { answer: text, sources: citedSources(text, passages), covered: true };
 }
