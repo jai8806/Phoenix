@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../domain/diary_stats.dart';
 import '../domain/eligibility.dart';
 import '../domain/hosted_tests.dart';
+import '../domain/omr/progress.dart';
 import 'auth_repository.dart';
 import 'demo/demo_data.dart';
 import 'models/comms.dart';
@@ -265,6 +266,12 @@ class TestsController extends LiveListController<TestDefinition> {
           questionIds: t.questionIds,
           opensAt: t.opensAt,
           closesAt: t.closesAt,
+          mode: t.mode,
+          pattern: t.pattern,
+          sheetCode: t.sheetCode,
+          uploadMinutes: t.uploadMinutes,
+          setSeed: t.setSeed,
+          numbers: t.numbers ?? const [],
         ),
         ...state,
       ];
@@ -279,9 +286,41 @@ class TestsController extends LiveListController<TestDefinition> {
     state = [for (final t in state) if (t.id != id) t];
   }
 
+  /// Starts an OMR mock now (sample mode starts it locally).
+  Future<void> start(TestDefinition t) async {
+    final live = repo;
+    final now = ref.read(clockProvider)();
+    final started = live == null
+        ? t.copyWith(startedAt: now, opensAt: now, closesAt: now.add(Duration(minutes: t.durationMinutes + t.uploadMinutes)))
+        : await live.startTest(t);
+    state = [for (final x in state) x.id == t.id ? started : x];
+  }
+
   /// Records the cadet's score after they submit.
   void markTaken(String id, double score) =>
       state = [for (final t in state) t.id == id ? t.withMyScore(score) : t];
+}
+
+/// The member's own submitted attempts, with every answer.
+final myHistoryProvider = NotifierProvider<MyHistoryController, List<AttemptHistory>>(MyHistoryController.new);
+
+class MyHistoryController extends LiveListController<AttemptHistory> {
+  @override
+  List<AttemptHistory> demo() => const [];
+
+  @override
+  Future<List<AttemptHistory>> fetch(UnitRepository repo) => repo.attemptHistory();
+}
+
+/// Every attempt in the unit (admins).
+final unitHistoryProvider = NotifierProvider<UnitHistoryController, List<AttemptHistory>>(UnitHistoryController.new);
+
+class UnitHistoryController extends LiveListController<AttemptHistory> {
+  @override
+  List<AttemptHistory> demo() => const [];
+
+  @override
+  Future<List<AttemptHistory>> fetch(UnitRepository repo) => repo.attemptHistory(wholeUnit: true);
 }
 
 /// Sample records with attendance and camp, used only in sample mode.

@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -14,6 +16,7 @@ import 'package:phoenix/data/providers.dart';
 import 'package:phoenix/data/unit_repository.dart';
 import 'package:phoenix/data/precis_pack.dart';
 import 'package:phoenix/domain/precis_search.dart';
+import 'package:phoenix/domain/omr/progress.dart';
 import 'package:phoenix/features/cadet/diary_entry_screen.dart';
 import 'package:phoenix/features/cadet/edit_profile_screen.dart';
 
@@ -139,8 +142,39 @@ class FakeUnitRepo implements UnitRepository {
   @override
   Future<void> deleteTest(String testId) async => testsList.removeWhere((t) => t.id == testId);
 
+  final uploads = <String, int>{};
+  String? lastSetLabel;
+  int lastScanFlags = 0;
+
   @override
-  Future<double> submitAttempt(String testId, Map<String, int> answers, {int focusLost = 0}) async {
+  Future<TestDefinition> startTest(TestDefinition test) async {
+    final started = test.copyWith(startedAt: now, opensAt: now,
+        closesAt: now.add(Duration(minutes: test.durationMinutes + test.uploadMinutes)));
+    final i = testsList.indexWhere((t) => t.id == test.id);
+    if (i >= 0) testsList[i] = started;
+    return started;
+  }
+
+  @override
+  Future<String> uploadSheet(String testId, Uint8List jpeg) async {
+    uploads[testId] = jpeg.length;
+    return 'unit-1/$testId/u1.jpg';
+  }
+
+  @override
+  Future<String?> sheetUrl(String path) async => null;
+
+  final history = <AttemptHistory>[];
+
+  @override
+  Future<List<AttemptHistory>> attemptHistory({bool wholeUnit = false}) async =>
+      wholeUnit ? List.of(history) : [for (final h in history) if (h.cadetId == 'u1') h];
+
+  @override
+  Future<double> submitAttempt(String testId, Map<String, int> answers,
+      {int focusLost = 0, String? sheetPath, String? setLabel, int scanFlags = 0, int corrected = 0}) async {
+    lastSetLabel = setLabel;
+    lastScanFlags = scanFlags;
     if (failSubmit) {
       throw const UnitDataFailure("Couldn't submit your answers. Check your connection and try again; your answers are kept.");
     }
@@ -421,6 +455,8 @@ void main() {
     await tester.tap(find.text('New test'));
     await tester.pumpAndSettle();
     await tester.enterText(find.widgetWithText(TextField, 'Test name'), 'Weekly test 1');
+    await tester.tap(find.text('In-app test'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Chosen subjects'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Weapon Training · 15'));

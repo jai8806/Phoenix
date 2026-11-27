@@ -37,6 +37,13 @@ Command Center; the ANO changes ranks and roles from the Cadets tab.
 
 Check it locally: `psql -d phoenix_check -f migrations/20261127010000_hosted_tests.sql -f tests/hosted_tests_check.sql`.
 
+## OMR mock exams
+
+Run `migrations/20261129000000_omr_mocks.sql` (adds OMR details to tests and
+attempts, extends `submit_attempt()`, and creates the private `omr-sheets`
+bucket, where cadets upload only their own sheet photo). See `docs/OMR.md`.
+Check: `psql -d phoenix_check -f tests/omr_mocks_check.sql`.
+
 ## Précis figures
 
 1. Run `migrations/20261127000000_figures.sql` (creates the `figures` table

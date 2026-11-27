@@ -126,6 +126,15 @@ class _LearnScreenState extends ConsumerState<LearnScreen> {
             onTap: () => context.push(Routes.quiz('mock')),
           ),
         ]),
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.insights_outlined),
+            title: const Text('My progress'),
+            subtitle: const Text('Scores over time, weak subjects, would you pass today'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => context.push(Routes.progress),
+          ),
+        ),
         const SectionHeader('Tests from your unit'),
         if (tests.isEmpty)
           const EmptyState(icon: Icons.quiz_outlined, title: 'No tests yet',
@@ -211,6 +220,20 @@ class _TestTile extends StatelessWidget {
     final c = Theme.of(context).colorScheme;
     void go() => context.push(Routes.quiz(test.id));
 
+    if (test.isOmr && !test.attempted) {
+      final live = test.startedAt != null && !test.hasClosed(now);
+      return ListTile(
+        leading: Icon(Icons.description_outlined, color: live ? c.primary : null),
+        title: Text(test.title),
+        subtitle: Text(test.startedAt == null
+            ? 'OMR mock · ${test.questionIds.length} Q · 3 h · waiting for your ANO to start'
+            : live
+                ? (now.isBefore(test.paperEndsAt!) ? 'Live now · open the question paper' : 'Scan your OMR sheet now')
+                : 'Closed · missed'),
+        trailing: test.hasClosed(now) ? null : FilledButton.tonal(onPressed: () => context.push(Routes.exam(test.id)), child: Text(live ? 'Open' : 'Get ready')),
+        onTap: test.hasClosed(now) ? null : () => context.push(Routes.exam(test.id)),
+      );
+    }
     if (test.attempted) {
       final closed = test.hasClosed(now);
       return ListTile(

@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'models/comms.dart';
@@ -6,6 +8,7 @@ import 'models/figure.dart';
 import 'models/test.dart';
 import 'models/user.dart';
 import 'models/ustaad.dart';
+import '../domain/omr/progress.dart';
 import '../domain/precis_search.dart';
 
 /// Everything a signed-in member reads or writes for their unit.
@@ -48,7 +51,22 @@ abstract interface class UnitRepository {
   Future<void> deleteTest(String testId);
 
   /// Marked on the server; returns the score. A cadet can submit once.
-  Future<double> submitAttempt(String testId, Map<String, int> answers, {int focusLost = 0});
+  /// For an OMR mock, pass the uploaded sheet photo and how it was read.
+  Future<double> submitAttempt(String testId, Map<String, int> answers,
+      {int focusLost = 0, String? sheetPath, String? setLabel, int scanFlags = 0, int corrected = 0});
+
+  /// ANO / senior cadet: starts an OMR mock now; it closes after the paper and the upload window.
+  Future<TestDefinition> startTest(TestDefinition test);
+
+  /// Uploads the cadet's sheet photo; returns its storage path.
+  Future<String> uploadSheet(String testId, Uint8List jpeg);
+
+  /// Short-lived link to a sheet photo.
+  Future<String?> sheetUrl(String path);
+
+  /// Submitted attempts with every answer and its question: the member's own,
+  /// or the whole unit's for admins.
+  Future<List<AttemptHistory>> attemptHistory({bool wholeUnit = false});
 
   /// The member's own answers to a test they took.
   Future<Map<String, int?>> myAnswers(String testId);
@@ -264,6 +282,7 @@ class SupabaseUnitRepository implements UnitRepository {
         final rows = await _client
             .from('tests')
             .select('id, title, description, duration_minutes, marks_correct, marks_wrong, opens_at, closes_at, '
+                'mode, pattern, sheet_code, started_at, upload_minutes, set_seed, '
                 'test_questions(question_id, position), test_attempts(count)')
             .order('created_at', ascending: false)
             .limit(200);
@@ -299,13 +318,19 @@ class SupabaseUnitRepository implements UnitRepository {
               'opens_at': t.opensAt?.toUtc().toIso8601String(),
               'closes_at': t.closesAt?.toUtc().toIso8601String(),
               'created_by': _user.id,
+              'mode': t.mode.name,
+              'pattern': t.pattern,
+              'sheet_code': t.sheetCode,
+              'upload_minutes': t.uploadMinutes,
+              'set_seed': t.setSeed,
             })
             .select('id')
             .single();
         final id = row['id'] as String;
         try {
           await _client.from('test_questions').insert([
-            for (var i = 0; i < t.questionIds.length; i++) {'test_id': id, 'question_id': t.questionIds[i], 'position': i},
+            for (var i = 0; i < t.questionIds.length; i++)
+              {'test_id': id, 'question_id': t.questionIds[i], 'position': t.numbers?[i] ?? i + 1},
           ]);
         } catch (_) {
           await _client.from('tests').delete().eq('id', id);
@@ -319,17 +344,22 @@ class SupabaseUnitRepository implements UnitRepository {
       }, 'delete the test');
 
   @override
-  Future<double> submitAttempt(String testId, Map<String, int> answers, {int focusLost = 0}) async {
+  Future<double> submitAttempt(String testId, Map<String, int> answers,
+      {int focusLost = 0, String? sheetPath, String? setLabel, int scanFlags = 0, int corrected = 0}) async {
     try {
       final score = await _client.rpc('submit_attempt', params: {
         'tid': testId,
         'answers': answers,
         'focus_lost': focusLost,
+        'sheet_path': ?sheetPath,
+        'set_label': ?setLabel,
+        'scan_flags': scanFlags,
+        'corrected': corrected,
       });
       return (score as num).toDouble();
     } on PostgrestException catch (e) {
       // The function's own messages are written for cadets.
-      const known = ['already taken', 'has closed', 'not opened', 'not found'];
+      const known = ['already taken', 'has closed', 'not opened', 'not found', 'not started', 'not yours'];
       throw UnitDataFailure(known.any(e.message.contains)
           ? '${e.message}.'
           : "Couldn't submit your answers. Check your connection and try again; your answers are kept.");
@@ -338,6 +368,48 @@ class SupabaseUnitRepository implements UnitRepository {
           "Couldn't submit your answers. Check your connection and try again; your answers are kept.");
     }
   }
+
+  @override
+  Future<TestDefinition> startTest(TestDefinition test) => _guard(() async {
+        final now = DateTime.now().toUtc();
+        final closes = now.add(Duration(minutes: test.durationMinutes + test.uploadMinutes));
+        final rows = await _client
+            .from('tests')
+            .update({
+              'started_at': now.toIso8601String(),
+              'opens_at': now.toIso8601String(),
+              'closes_at': closes.toIso8601String(),
+            })
+            .eq('id', test.id)
+            .select('id');
+        if (rows.isEmpty) throw const UnitDataFailure('Only your ANO or a senior cadet can start the exam.');
+        return test.copyWith(startedAt: now.toLocal(), opensAt: now.toLocal(), closesAt: closes.toLocal());
+      }, 'start the exam');
+
+  @override
+  Future<String> uploadSheet(String testId, Uint8List jpeg) => _guard(() async {
+        final path = '$_unitId/$testId/${_user.id}.jpg';
+        await _client.storage
+            .from('omr-sheets')
+            .uploadBinary(path, jpeg, fileOptions: const FileOptions(contentType: 'image/jpeg', upsert: true));
+        return path;
+      }, 'upload your sheet photo');
+
+  @override
+  Future<String?> sheetUrl(String path) => _guard(() async {
+        return _client.storage.from('omr-sheets').createSignedUrl(path, 60 * 30);
+      }, 'open the sheet photo');
+
+  @override
+  Future<List<AttemptHistory>> attemptHistory({bool wholeUnit = false}) => _guard(() async {
+        var query = _client.from('test_attempts').select(
+            'test_id, cadet_id, score, submitted_at, profiles(full_name, rank), '
+            'tests(title, marks_correct, marks_wrong, pattern), '
+            'attempt_answers(chosen_index, questions(id, subject, prompt, options, correct_index, explanation))');
+        if (!wholeUnit) query = query.eq('cadet_id', _user.id);
+        final rows = await query.order('submitted_at').limit(wholeUnit ? 1500 : 300);
+        return [for (final r in rows) historyFromRow(r)];
+      }, 'load progress');
 
   @override
   Future<Map<String, int?>> myAnswers(String testId) => _guard(() async {
@@ -354,8 +426,8 @@ class SupabaseUnitRepository implements UnitRepository {
   Future<List<AttemptRecord>> testAttempts(String testId) => _guard(() async {
         final rows = await _client
             .from('test_attempts')
-            .select('cadet_id, score, submitted_at, focus_lost_count, profiles(full_name, rank), '
-                'attempt_answers(question_id, chosen_index)')
+            .select('cadet_id, score, submitted_at, focus_lost_count, sheet_path, set_label, scan_flags, corrected, '
+                'profiles(full_name, rank), attempt_answers(question_id, chosen_index)')
             .eq('test_id', testId);
         return [for (final r in rows) attemptFromRow(r)];
       }, 'load the results');
@@ -536,6 +608,13 @@ TestDefinition testFromRow(Map<String, dynamic> r, {double? myScore}) {
   return TestDefinition(
     id: r['id'] as String,
     title: r['title'] as String,
+    mode: r['mode'] == 'omr' ? TestMode.omr : TestMode.app,
+    pattern: r['pattern'] as String?,
+    sheetCode: (r['sheet_code'] as num?)?.toInt(),
+    startedAt: r['started_at'] == null ? null : _time(r['started_at']),
+    uploadMinutes: (r['upload_minutes'] as num?)?.toInt() ?? 20,
+    setSeed: (r['set_seed'] as num?)?.toInt() ?? 0,
+    numbers: [for (final q in tq) ((q['position'] as num?) ?? 0).toInt()],
     description: r['description'] as String?,
     durationMinutes: (r['duration_minutes'] as num).toInt(),
     marking: MarkingScheme(
@@ -547,6 +626,29 @@ TestDefinition testFromRow(Map<String, dynamic> r, {double? myScore}) {
     closesAt: r['closes_at'] == null ? null : _time(r['closes_at']),
     myScore: myScore,
     attemptCount: counts == null || counts.isEmpty ? 0 : ((counts.first as Map)['count'] as num?)?.toInt() ?? 0,
+  );
+}
+
+AttemptHistory historyFromRow(Map<String, dynamic> r) {
+  final t = r['tests'] as Map<String, dynamic>? ?? const {};
+  final p = r['profiles'] as Map<String, dynamic>?;
+  return AttemptHistory(
+    testId: r['test_id'] as String,
+    testTitle: t['title'] as String? ?? 'Test',
+    cadetId: r['cadet_id'] as String,
+    cadetName: p == null ? 'Cadet' : [if (p['rank'] != null) p['rank'], p['full_name']].join(' '),
+    score: (r['score'] as num?)?.toDouble() ?? 0,
+    submittedAt: r['submitted_at'] == null ? null : _time(r['submitted_at']),
+    pattern: t['pattern'] as String?,
+    marking: MarkingScheme(
+      correct: (t['marks_correct'] as num?)?.toDouble() ?? 2,
+      wrong: (t['marks_wrong'] as num?)?.toDouble() ?? 0,
+    ),
+    answers: [
+      for (final a in r['attempt_answers'] as List? ?? const [])
+        if ((a as Map)['questions'] != null && (a['questions'] as Map)['correct_index'] != null)
+          AnsweredQuestion(questionFromRow(Map<String, dynamic>.from(a['questions'] as Map)), (a['chosen_index'] as num?)?.toInt()),
+    ],
   );
 }
 
@@ -562,6 +664,10 @@ AttemptRecord attemptFromRow(Map<String, dynamic> r) {
     score: (r['score'] as num?)?.toDouble() ?? 0,
     submittedAt: r['submitted_at'] == null ? null : _time(r['submitted_at']),
     focusLost: (r['focus_lost_count'] as num?)?.toInt() ?? 0,
+    sheetPath: r['sheet_path'] as String?,
+    setLabel: r['set_label'] as String?,
+    scanFlags: (r['scan_flags'] as num?)?.toInt() ?? 0,
+    corrected: (r['corrected'] as num?)?.toInt() ?? 0,
     answers: answersFromRows(r['attempt_answers'] as List? ?? const []),
   );
 }

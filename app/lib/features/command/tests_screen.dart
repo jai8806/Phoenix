@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -11,6 +13,8 @@ import '../../data/exam/exam_data.dart';
 import '../../data/models/test.dart';
 import '../../data/providers.dart';
 import '../../domain/hosted_tests.dart';
+import '../../domain/omr/exam_pattern.dart';
+import '../../domain/omr/omr_layout.dart';
 import '../shared/widgets.dart';
 
 class TestsScreen extends ConsumerWidget {
@@ -30,6 +34,16 @@ class TestsScreen extends ConsumerWidget {
           subtitle: const Text('Set the correct answer for questions from the précis. Approved ones join the practice bank.'),
           trailing: const Icon(Icons.chevron_right),
           onTap: () => context.push(Routes.review),
+        ),
+      ),
+      const SizedBox(height: Space.sm),
+      Card(
+        child: ListTile(
+          leading: const Icon(Icons.insights_outlined),
+          title: const Text('Unit performance'),
+          subtitle: const Text('Cadets at risk, weak subjects, cadet-by-subject heatmap'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => context.push(Routes.unitPerformance),
         ),
       ),
       const SizedBox(height: Space.lg),
@@ -68,6 +82,8 @@ String fmtMarks(double v) => v == v.roundToDouble() ? v.toStringAsFixed(0) : v.t
 /// "Open · closes Fri 5 Dec", "Closed", "Opens Mon 1 Dec".
 String testStatus(TestDefinition t, DateTime now) {
   final d = DateFormat('EEE d MMM');
+  if (t.isOmr && t.startedAt != null && t.paperEndsAt!.isAfter(now)) return 'Live · paper ends ${DateFormat('h:mm a').format(t.paperEndsAt!)}';
+  if (t.isOmr && t.startedAt != null && !t.hasClosed(now)) return 'Scanning sheets until ${DateFormat('h:mm a').format(t.closesAt!)}';
   if (!t.hasOpened(now)) return 'Opens ${d.format(t.opensAt!)}';
   if (t.hasClosed(now)) return 'Closed';
   return t.closesAt == null ? 'Open' : 'Open · closes ${d.format(t.closesAt!)}';
@@ -107,7 +123,7 @@ class _AdminTestTile extends ConsumerWidget {
           color: open ? context.status.success : null),
       title: Text(test.title),
       subtitle: Text([
-        testStatus(test, now),
+        if (test.isOmr) 'OMR mock · ${test.startedAt == null ? 'not started' : testStatus(test, now)}' else testStatus(test, now),
         '${test.questionIds.length} Q · ${test.durationMinutes} min',
         '+${fmtMarks(test.marking.correct)} / −${fmtMarks(test.marking.wrong)}',
         '${test.attemptCount} submitted',
@@ -127,6 +143,8 @@ class _AdminTestTile extends ConsumerWidget {
 
 enum _Source { pattern, subjects }
 
+enum _Kind { app, omr }
+
 class NewTestDialog extends ConsumerStatefulWidget {
   const NewTestDialog({super.key});
 
@@ -141,6 +159,9 @@ class _NewTestDialogState extends ConsumerState<NewTestDialog> {
   final _correct = TextEditingController(text: '2');
   late final TextEditingController _wrong;
   _Source _source = _Source.pattern;
+  _Kind _kind = _Kind.omr;
+  String _omrPattern = 'bcert';
+  int _uploadMinutes = 20;
   final Set<String> _subjects = {};
   int? _closeDays = 7;
   String? _error;
@@ -164,6 +185,7 @@ class _NewTestDialogState extends ConsumerState<NewTestDialog> {
   Future<void> _create() async {
     final title = _title.text.trim();
     if (title.isEmpty) return setState(() => _error = 'Give the test a name cadets will recognise.');
+    if (_kind == _Kind.omr) return _createOmr(title);
     if (_source == _Source.subjects && _subjects.isEmpty) {
       return setState(() => _error = 'Pick at least one subject.');
     }
@@ -213,6 +235,83 @@ class _NewTestDialogState extends ConsumerState<NewTestDialog> {
     }
   }
 
+  Future<void> _createOmr(String title) async {
+    final pattern = ExamPattern.byId(_omrPattern);
+    final pick = pickForPattern(pattern, ref.read(questionBankProvider));
+    if (pick.byNumber.isEmpty) return setState(() => _error = 'No approved questions fit this paper yet.');
+    final entries = pick.byNumber.entries.toList()..sort((a, b) => a.key.compareTo(b.key));
+    final rng = Random();
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      await ref.read(testsProvider.notifier).create(NewTest(
+            title: title,
+            durationMinutes: pattern.durationMinutes,
+            marking: pattern.marking,
+            questionIds: [for (final e in entries) e.value],
+            numbers: [for (final e in entries) e.key],
+            mode: TestMode.omr,
+            pattern: pattern.id,
+            sheetCode: 1 + rng.nextInt(OmrLayout.maxCode),
+            setSeed: rng.nextInt(1 << 30),
+            uploadMinutes: _uploadMinutes,
+          ));
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Mock created. Open it to print the OMR sheets, then start it on exam day.'),
+      ));
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _saving = false;
+          _error = '$e';
+        });
+      }
+    }
+  }
+
+  Widget _omrFields(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    final c = Theme.of(context).colorScheme;
+    final pattern = ExamPattern.byId(_omrPattern);
+    final pick = pickForPattern(pattern, ref.watch(questionBankProvider), rng: Random(1));
+    final missing = pick.shortfall.values.fold(0, (a, b) => a + b);
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const SizedBox(height: Space.lg),
+      Text('Paper', style: t.labelLarge),
+      const SizedBox(height: Space.sm),
+      SegmentedButton<String>(
+        segments: const [
+          ButtonSegment(value: 'bcert', label: Text('B Certificate')),
+          ButtonSegment(value: 'ccert', label: Text('C Certificate')),
+        ],
+        selected: {_omrPattern},
+        onSelectionChanged: (s) => setState(() => _omrPattern = s.first),
+      ),
+      const SizedBox(height: Space.sm),
+      Text('${pattern.questionCount} questions · ${pattern.totalMarks.toStringAsFixed(0)} marks · 3 hours · '
+          '+2 / −0.5 · ${pattern.papers.length} papers, 33% each to pass. Sets A1 and A2.',
+          style: t.bodySmall?.copyWith(color: c.onSurfaceVariant)),
+      const SizedBox(height: Space.sm),
+      if (missing == 0)
+        Text('Every section has enough approved questions.', style: t.bodySmall?.copyWith(color: context.status.success))
+      else
+        Text('Short of approved questions: ${[for (final e in pick.shortfall.entries) '${e.key} ${e.value}'].join(', ')}. '
+            'Those question numbers stay unused on the sheet; approve more in the review queue to fill them.',
+            style: t.bodySmall?.copyWith(color: context.status.warning)),
+      const SizedBox(height: Space.lg),
+      Text('Time to scan sheets after the paper', style: t.labelLarge),
+      const SizedBox(height: Space.sm),
+      Wrap(spacing: Space.sm, children: [
+        for (final m in const [15, 20, 30])
+          ChoiceChip(label: Text('$m min'), selected: _uploadMinutes == m, onSelected: (_) => setState(() => _uploadMinutes = m)),
+      ]),
+    ]);
+  }
+
   @override
   Widget build(BuildContext context) {
     final numeric = [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))];
@@ -236,6 +335,19 @@ class _NewTestDialogState extends ConsumerState<NewTestDialog> {
             onChanged: (_) => setState(() => _error = null),
             decoration: InputDecoration(labelText: 'Test name', hintText: 'e.g. Weekly test 4 · Map Reading'),
           ),
+          const SizedBox(height: Space.lg),
+          SegmentedButton<_Kind>(
+            segments: const [
+              ButtonSegment(value: _Kind.omr, label: Text('OMR mock (real exam)'), icon: Icon(Icons.description_outlined)),
+              ButtonSegment(value: _Kind.app, label: Text('In-app test'), icon: Icon(Icons.phone_android)),
+            ],
+            selected: {_kind},
+            onSelectionChanged: (s) => setState(() {
+              _kind = s.first;
+              _error = null;
+            }),
+          ),
+          if (_kind == _Kind.omr) _omrFields(context) else ...[
           const SizedBox(height: Space.lg),
           Text('Questions from', style: t.labelLarge),
           const SizedBox(height: Space.sm),
@@ -319,6 +431,7 @@ class _NewTestDialogState extends ConsumerState<NewTestDialog> {
                 onSelected: (_) => setState(() => _closeDays = days),
               ),
           ]),
+          ],
           if (_error != null) ...[
             const SizedBox(height: Space.md),
             Text(_error!, style: t.bodyMedium?.copyWith(color: c.error)),

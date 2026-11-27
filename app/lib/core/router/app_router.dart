@@ -22,6 +22,8 @@ import '../../features/command/overview_screen.dart';
 import '../../features/command/review_screen.dart';
 import '../../features/command/roster_screen.dart';
 import '../../features/command/test_results_screen.dart';
+import '../../features/omr/exam_screen.dart';
+import '../../features/omr/progress_screens.dart';
 import '../../features/command/tests_screen.dart';
 import '../../features/shared/announcements_screen.dart';
 import '../../features/shared/calendar_screen.dart';
@@ -40,6 +42,9 @@ abstract final class Routes {
   static String quiz(String testId) => '/quiz/${Uri.encodeComponent(testId)}';
   static const plan = '/study-plan';
   static const editProfile = '/profile/edit';
+  static String exam(String testId) => '/exam/${Uri.encodeComponent(testId)}';
+  static const progress = '/progress';
+  static const unitPerformance = '/command-performance';
   static String subject(String name) => '/subject?name=${Uri.encodeQueryComponent(name)}';
   /// A chapter of one book; without [book], the book for the cadet's division is picked.
   static String chapter(String code, {String? book}) =>
@@ -113,6 +118,9 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(path: Routes.plan, builder: (_, _) => const StudyPlanScreen()),
       GoRoute(path: Routes.editProfile, builder: (_, _) => const EditProfileScreen()),
+      GoRoute(path: Routes.progress, builder: (_, _) => const ProgressScreen()),
+      GoRoute(path: Routes.unitPerformance, builder: (_, _) => const UnitPerformanceScreen()),
+      GoRoute(path: '/exam/:id', builder: (_, s) => ExamScreen(testId: Uri.decodeComponent(s.pathParameters['id']!))),
       GoRoute(path: '/subject', builder: (_, s) => SubjectScreen(name: s.uri.queryParameters['name'] ?? '')),
       GoRoute(
         path: '/chapter',

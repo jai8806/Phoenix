@@ -66,6 +66,13 @@ class TestDefinition {
     this.description,
     this.myScore,
     this.attemptCount = 0,
+    this.mode = TestMode.app,
+    this.pattern,
+    this.sheetCode,
+    this.startedAt,
+    this.uploadMinutes = 20,
+    this.setSeed = 0,
+    this.numbers = const [],
   });
 
   final String id;
@@ -73,6 +80,30 @@ class TestDefinition {
   final int durationMinutes;
   final MarkingScheme marking;
   final List<String> questionIds;
+
+  /// OMR mock or a test taken in the app.
+  final TestMode mode;
+
+  /// 'bcert' or 'ccert' for an OMR mock.
+  final String? pattern;
+  final int? sheetCode;
+
+  /// When the ANO started the OMR mock; null until then.
+  final DateTime? startedAt;
+
+  /// Minutes after the paper ends for cadets to scan their sheets.
+  final int uploadMinutes;
+
+  /// Seed for the Set A2 question order.
+  final int setSeed;
+
+  /// Sheet number of each question (same order as [questionIds]), for OMR mocks.
+  final List<int> numbers;
+
+  bool get isOmr => mode == TestMode.omr;
+
+  /// When the paper ends and scanning starts (OMR mocks).
+  DateTime? get paperEndsAt => startedAt?.add(Duration(minutes: durationMinutes));
   final DateTime? opensAt;
   final DateTime? closesAt;
   final String? description;
@@ -90,19 +121,31 @@ class TestDefinition {
   bool hasClosed(DateTime now) => closesAt != null && !closesAt!.isAfter(now);
   bool isOpen(DateTime now) => hasOpened(now) && !hasClosed(now);
 
-  TestDefinition withMyScore(double score) => TestDefinition(
+  TestDefinition withMyScore(double score) => copyWith(myScore: score, attemptCount: attemptCount + 1);
+
+  TestDefinition copyWith({double? myScore, int? attemptCount, DateTime? startedAt, DateTime? opensAt, DateTime? closesAt}) =>
+      TestDefinition(
         id: id,
         title: title,
         durationMinutes: durationMinutes,
         marking: marking,
         questionIds: questionIds,
-        opensAt: opensAt,
-        closesAt: closesAt,
+        opensAt: opensAt ?? this.opensAt,
+        closesAt: closesAt ?? this.closesAt,
         description: description,
-        myScore: score,
-        attemptCount: attemptCount + 1,
+        myScore: myScore ?? this.myScore,
+        attemptCount: attemptCount ?? this.attemptCount,
+        mode: mode,
+        pattern: pattern,
+        sheetCode: sheetCode,
+        startedAt: startedAt ?? this.startedAt,
+        uploadMinutes: uploadMinutes,
+        setSeed: setSeed,
+        numbers: numbers,
       );
 }
+
+enum TestMode { app, omr }
 
 /// What an admin fills in to host a test.
 class NewTest {
@@ -114,7 +157,22 @@ class NewTest {
     this.description,
     this.opensAt,
     this.closesAt,
+    this.mode = TestMode.app,
+    this.pattern,
+    this.sheetCode,
+    this.uploadMinutes = 20,
+    this.setSeed = 0,
+    this.numbers,
   });
+
+  final TestMode mode;
+  final String? pattern;
+  final int? sheetCode;
+  final int uploadMinutes;
+  final int setSeed;
+
+  /// Sheet number per question for an OMR mock; positions 1..n otherwise.
+  final List<int>? numbers;
 
   final String title;
   final String? description;
@@ -134,7 +192,19 @@ class AttemptRecord {
     required this.answers,
     this.submittedAt,
     this.focusLost = 0,
+    this.sheetPath,
+    this.setLabel,
+    this.scanFlags = 0,
+    this.corrected = 0,
   });
+
+  /// The photographed OMR sheet, for OMR mocks.
+  final String? sheetPath;
+  final String? setLabel;
+
+  /// Marks the scanner asked the cadet to check, and how many they changed.
+  final int scanFlags;
+  final int corrected;
 
   final String cadetId;
   final String cadetName;
