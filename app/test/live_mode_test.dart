@@ -1,0 +1,1165 @@
+import 'dart:typed_data';
+
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
+import 'package:phoenix/app.dart';
+import 'package:phoenix/core/router/app_router.dart';
+import 'package:phoenix/data/auth_repository.dart';
+import 'package:phoenix/data/models/comms.dart';
+import 'package:phoenix/data/models/diary.dart';
+import 'package:phoenix/data/models/queries.dart';
+import 'package:phoenix/data/models/figure.dart';
+import 'package:phoenix/data/models/test.dart';
+import 'package:phoenix/data/models/user.dart';
+import 'package:phoenix/data/models/ustaad.dart';
+import 'package:phoenix/data/providers.dart';
+import 'package:phoenix/data/unit_repository.dart';
+import 'package:phoenix/data/precis_pack.dart';
+import 'package:phoenix/domain/precis_search.dart';
+import 'package:phoenix/domain/omr/exam_pattern.dart';
+import 'package:phoenix/domain/omr/progress.dart';
+import 'package:phoenix/features/cadet/diary_entry_screen.dart';
+import 'package:phoenix/features/cadet/edit_profile_screen.dart';
+
+final now = DateTime(2026, 11, 26, 9);
+
+class FakeUnitRepo implements UnitRepository {
+  final announcementsList = <Announcement>[
+    Announcement(id: 'x1', title: 'Real unit notice', body: 'From the database', author: 'Lt Real', createdAt: now),
+  ];
+  final eventsList = <CalendarEvent>[];
+  final diaryList = <DiaryEntry>[];
+  final bank = <Question>[];
+  final queue = <ReviewItem>[
+    const ReviewItem(id: 'r1', prompt: 'Who is the Supreme Commander?', options: ['PM', 'President', 'CDS', 'RM'],
+        source: 'Special Subject (Army) JD/JW (2025) · AF I · Q1', page: 12),
+  ];
+  final approvals = <(String, int)>[];
+  bool failAnnouncements = false;
+  bool failPost = false;
+  bool offline = false;
+  int aiCalls = 0;
+  final lastAiModes = <String>[];
+  List<int> lastAiChunks = const [];
+
+  static const demoPassages = [
+    PrecisPassage(id: 1, title: 'Demo Army Book', heading: 'AF I · Introduction', page: 2,
+        content: 'The responsibility for national defence rests with the cabinet. '
+            'The President of India is the Supreme Commander of the Indian Armed Forces.'),
+    PrecisPassage(id: 2, title: 'Demo Map Book', heading: 'MR III · Types of North', page: 185,
+        content: 'There are three types of north. (a) True north points to the geographic pole. '
+            '(b) Magnetic north is shown by the compass needle. (c) Grid north follows the grid lines.'),
+  ];
+
+  static const demoFigures = [
+    PrecisFigure(id: 'f1', title: 'Demo Army Book', chapterCode: 'AF I', page: 2, path: 'demo/f1.webp', width: 400, height: 300),
+    PrecisFigure(id: 'f2', title: 'Demo Map Book', chapterCode: 'MR III', page: 185, path: 'demo/f2.webp', width: 300, height: 300),
+  ];
+  final urlRequests = <String>[];
+
+  @override
+  Future<List<PrecisFigure>> figures() async => demoFigures;
+
+  @override
+  Future<Map<String, String>> figureUrls(List<String> paths) async {
+    urlRequests.addAll(paths);
+    // Links as if the files are uploaded (tests have no network, so the images
+    // themselves show their placeholder).
+    return {for (final p in paths) p: 'https://figures.invalid/$p'};
+  }
+
+  @override
+  Future<List<PrecisPassage>> precisPassages() async {
+    if (offline) throw const UnitDataFailure("Couldn't download the study material. Check your connection and try again.");
+    return demoPassages;
+  }
+
+  @override
+  Future<List<Announcement>> announcements() async {
+    if (failAnnouncements) throw const UnitDataFailure("Couldn't load announcements. Check your connection and try again.");
+    return List.of(announcementsList);
+  }
+
+  @override
+  Future<void> postAnnouncement({required String title, required String body, bool pinned = false}) async {
+    if (failPost) throw const UnitDataFailure("You don't have permission to post the announcement.");
+    announcementsList.insert(0, Announcement(id: 'n', title: title, body: body, author: 'Me', createdAt: now));
+  }
+
+  @override
+  Future<List<CalendarEvent>> events() async => List.of(eventsList);
+
+  @override
+  Future<void> addEvent(CalendarEvent event) async => eventsList.add(event);
+
+  final responsesList = <EventResponse>[];
+  String meId = 'u1';
+
+  @override
+  Future<List<EventResponse>> myResponses() async => responsesList.where((r) => r.cadetId == meId).toList();
+
+  @override
+  Future<void> respondToEvent(String eventId, Attendance status, {String? reason}) async {
+    responsesList.removeWhere((r) => r.eventId == eventId && r.cadetId == meId);
+    responsesList.add(EventResponse(eventId: eventId, cadetId: meId, status: status, reason: reason, respondedAt: now));
+  }
+
+  @override
+  Future<List<EventResponse>> eventResponses(String eventId) async => responsesList.where((r) => r.eventId == eventId).toList();
+
+  @override
+  Future<void> markAttendance(String eventId, String cadetId, bool attended) async {
+    final i = responsesList.indexWhere((r) => r.eventId == eventId && r.cadetId == cadetId);
+    if (i >= 0) {
+      responsesList[i] = responsesList[i].copyWith(attended: () => attended);
+    } else {
+      responsesList.add(EventResponse(eventId: eventId, cadetId: cadetId, status: Attendance.coming, attended: attended));
+    }
+  }
+
+  @override
+  Future<List<DiaryEntry>> diary() async => List.of(diaryList);
+
+  @override
+  Future<void> addDiaryEntry(DiaryEntry entry) async => diaryList.insert(0, entry);
+
+  @override
+  Future<List<Question>> approvedQuestions() async => List.of(bank);
+
+  @override
+  Future<List<ReviewItem>> reviewQueue() async => List.of(queue);
+
+  @override
+  Future<void> approveQuestion(String id, int answer) async {
+    approvals.add((id, answer));
+    final item = queue.firstWhere((q) => q.id == id);
+    queue.remove(item);
+    bank.add(Question(id: 'a$id', subject: 'AF I', prompt: item.prompt, options: item.options, correctIndex: answer));
+  }
+
+  @override
+  Future<List<KnowledgeDocument>> documents() async => const [];
+
+  // Hosted tests --------------------------------------------------------------
+  final testsList = <TestDefinition>[];
+  final testQs = <String, List<Question>>{};
+  final attemptsByTest = <String, List<AttemptRecord>>{};
+  final myScores = <String, double>{};
+  final submissions = <(String, Map<String, int>)>[];
+  bool failSubmit = false;
+  final membersList = <AppUser>[cadet, ano];
+  final memberUpdates = <(String, AppRole, String?)>[];
+
+  @override
+  Future<List<TestDefinition>> tests() async => [
+        for (final t in testsList)
+          myScores.containsKey(t.id)
+              ? t.withMyScore(myScores[t.id]!)
+              : t,
+      ];
+
+  @override
+  Future<List<Question>> testQuestions(String testId) async => testQs[testId] ?? const [];
+
+  @override
+  Future<String> createTest(NewTest t) async {
+    final id = 'h${testsList.length + 1}';
+    testsList.insert(0, TestDefinition(id: id, title: t.title, durationMinutes: t.durationMinutes, marking: t.marking,
+        questionIds: t.questionIds, opensAt: t.opensAt, closesAt: t.closesAt, isDraft: t.draft, mode: t.mode,
+        pattern: t.pattern, sheetCode: t.sheetCode, setSeed: t.setSeed, uploadMinutes: t.uploadMinutes,
+        numbers: t.numbers ?? const []));
+    testQs[id] = [for (final qid in t.questionIds) bank.firstWhere((q) => q.id == qid)];
+    return id;
+  }
+
+  final published = <(String, DateTime?)>[];
+
+  // Anonymous queries: stored by ticket, never by person (like the server).
+  final queriesByTicket = <String, AnonQuery>{};
+  final queryLog = <String>[];
+
+  @override
+  Future<void> askQuery(String token, {required String subject, required String body, required QueryCategory category, required bool toAllSeniors}) async {
+    queriesByTicket[token] = AnonQuery(id: 'q${queriesByTicket.length + 1}', subject: subject, category: category,
+        status: QueryStatus.open, createdAt: now, updatedAt: now, toAllSeniors: toAllSeniors,
+        messages: [QueryMessage(id: 'm0', fromSenior: false, body: body, createdAt: now)]);
+  }
+
+  @override
+  Future<List<AnonQuery>> myQueries(List<String> tokens) async => [
+        for (final t in tokens)
+          if (queriesByTicket[t] != null) _withToken(queriesByTicket[t]!, t),
+      ];
+
+  AnonQuery _withToken(AnonQuery q, String? t) => AnonQuery(id: q.id, subject: q.subject, category: q.category,
+      status: q.status, createdAt: q.createdAt, updatedAt: q.updatedAt, messages: q.messages, toAllSeniors: q.toAllSeniors, token: t);
+
+  @override
+  Future<List<AnonQuery>> queryInbox() async => [for (final q in queriesByTicket.values) _withToken(q, null)];
+
+  String _ticketOf(String id) => queriesByTicket.entries.firstWhere((e) => e.value.id == id).key;
+
+  @override
+  Future<void> replyToQuery(String queryId, String body, {String? token}) async {
+    final key = _ticketOf(queryId);
+    final q = queriesByTicket[key]!;
+    queryLog.add('${token == null ? 'senior' : 'asker'}: $body');
+    queriesByTicket[key] = AnonQuery(id: q.id, subject: q.subject, category: q.category,
+        status: token == null && q.status == QueryStatus.open ? QueryStatus.answered : q.status,
+        createdAt: q.createdAt, updatedAt: now, toAllSeniors: q.toAllSeniors,
+        messages: [...q.messages, QueryMessage(id: 'm${q.messages.length}', fromSenior: token == null,
+            seniorLabel: token == null ? 'CSUO' : null, body: body, createdAt: now)]);
+  }
+
+  @override
+  Future<void> setQueryStatus(String queryId, QueryStatus status, {String? token}) async {
+    final key = _ticketOf(queryId);
+    final q = queriesByTicket[key]!;
+    queriesByTicket[key] = AnonQuery(id: q.id, subject: q.subject, category: q.category, status: status,
+        createdAt: q.createdAt, updatedAt: now, toAllSeniors: q.toAllSeniors, messages: q.messages);
+  }
+
+  @override
+  Future<void> setTestQuestions(String testId, List<int> numbers, List<String> questionIds) async {
+    final i = testsList.indexWhere((t) => t.id == testId);
+    testsList[i] = testsList[i].copyWith(questionIds: questionIds, numbers: numbers);
+    testQs[testId] = [for (final qid in questionIds) bank.firstWhere((q) => q.id == qid)];
+  }
+
+  @override
+  Future<void> publishTest(String testId, {DateTime? scheduledFor, String? title}) async {
+    published.add((testId, scheduledFor));
+    final i = testsList.indexWhere((t) => t.id == testId);
+    testsList[i] = testsList[i].copyWith(isDraft: false, opensAt: scheduledFor, title: title);
+  }
+
+  @override
+  Future<Question> addUnitQuestion(Question q) async {
+    final saved = Question(id: 'u${bank.length + 1}', subject: q.subject, prompt: q.prompt, options: q.options,
+        correctIndex: q.correctIndex, explanation: q.explanation);
+    bank.add(saved);
+    return saved;
+  }
+
+  @override
+  Future<void> deleteTest(String testId) async => testsList.removeWhere((t) => t.id == testId);
+
+  final uploads = <String, int>{};
+  String? lastSetLabel;
+  int lastScanFlags = 0;
+
+  @override
+  Future<TestDefinition> startTest(TestDefinition test) async {
+    final started = test.copyWith(startedAt: now, opensAt: now,
+        closesAt: now.add(Duration(minutes: test.durationMinutes + test.uploadMinutes)));
+    final i = testsList.indexWhere((t) => t.id == test.id);
+    if (i >= 0) testsList[i] = started;
+    return started;
+  }
+
+  @override
+  Future<String> uploadSheet(String testId, Uint8List jpeg) async {
+    uploads[testId] = jpeg.length;
+    return 'unit-1/$testId/u1.jpg';
+  }
+
+  @override
+  Future<String?> sheetUrl(String path) async => null;
+
+  final history = <AttemptHistory>[];
+
+  @override
+  Future<List<AttemptHistory>> attemptHistory({bool wholeUnit = false}) async =>
+      wholeUnit ? List.of(history) : [for (final h in history) if (h.cadetId == 'u1') h];
+
+  @override
+  Future<double> submitAttempt(String testId, Map<String, int> answers,
+      {int focusLost = 0, String? sheetPath, String? setLabel, int scanFlags = 0, int corrected = 0}) async {
+    lastSetLabel = setLabel;
+    lastScanFlags = scanFlags;
+    if (failSubmit) {
+      throw const UnitDataFailure("Couldn't submit your answers. Check your connection and try again; your answers are kept.");
+    }
+    final t = testsList.firstWhere((t) => t.id == testId);
+    final score = scoreTest(questions: testQs[testId]!, answers: answers, marking: t.marking).score;
+    submissions.add((testId, answers));
+    myScores[testId] = score;
+    attemptsByTest.putIfAbsent(testId, () => []).add(
+        AttemptRecord(cadetId: 'u1', cadetName: 'Meera Nair', score: score, answers: answers, focusLost: focusLost));
+    return score;
+  }
+
+  @override
+  Future<Map<String, int?>> myAnswers(String testId) async => {
+        for (final a in attemptsByTest[testId] ?? const <AttemptRecord>[])
+          if (a.cadetId == 'u1') ...a.answers,
+      };
+
+  @override
+  Future<List<AttemptRecord>> testAttempts(String testId) async => attemptsByTest[testId] ?? const [];
+
+  @override
+  Future<List<ScoreRow>> unitScores() async => [
+        for (final e in attemptsByTest.entries)
+          for (final a in e.value) ScoreRow(testId: e.key, cadetId: a.cadetId, score: a.score),
+      ];
+
+  @override
+  Future<List<AppUser>> members() async => List.of(membersList);
+
+  @override
+  Future<void> updateMember(String id, {required AppRole role, String? rank, Appointment? appointment}) async {
+    memberUpdates.add((id, role, rank));
+    lastAppointment = appointment;
+  }
+
+  Appointment? lastAppointment;
+
+  @override
+  Future<UstaadReply> askUstaad(String question,
+      {List<int> chunkIds = const [], List<String> facts = const [], String mode = 'simple'}) async {
+    aiCalls++;
+    lastAiModes.add(mode);
+    lastAiChunks = chunkIds;
+    if (offline) throw const UnitDataFailure("Couldn't reach Ustaad. Check your connection and try again.");
+    return const UstaadReply(
+        answer: 'The President of India is the Supreme Commander [1].',
+        covered: true,
+        sources: [UstaadSource(n: 1, title: 'Special Subject (Army) JD/JW (2025)', heading: 'AF I · Introduction', pages: '2')],
+      );
+  }
+}
+
+class LiveAuth implements AuthRepository {
+  LiveAuth(this.user);
+  final AppUser user;
+  @override
+  bool get isDemo => false;
+  @override
+  Stream<AppUser> get externalSignIns => const Stream.empty();
+  @override
+  Future<AppUser?> restoreSession() async => user;
+  @override
+  Future<AppUser> signInAs(AppRole role) => throw UnsupportedError('');
+  @override
+  Future<AppUser> signInWithPassword({required String email, required String password}) async => user;
+  @override
+  Future<AppUser?> signUp({required String email, required String password, required String fullName}) async => user;
+  @override
+  Future<AppUser> joinUnit(String code) async => user;
+  final profileSaves = <AppUser>[];
+  @override
+  Future<AppUser> updateProfile(AppUser updated) async {
+    profileSaves.add(updated);
+    return updated;
+  }
+  @override
+  Future<void> signOut() async {}
+}
+
+const cadet = AppUser(id: 'u1', fullName: 'Meera Nair', role: AppRole.cadet, wing: Wing.army,
+    division: Division.sd, unitName: 'Test Unit', unitId: 'unit-1');
+const ano = AppUser(id: 'u2', fullName: 'Kavitha Iyer', role: AppRole.ano, rank: 'Lt',
+    unitName: 'Test Unit', unitId: 'unit-1');
+
+Future<(ProviderContainer, FakeUnitRepo)> pumpLive(WidgetTester tester, AppUser user,
+    {FakeUnitRepo? repo, Size size = const Size(420, 900), PrecisPackStore? store}) async {
+  tester.view.physicalSize = size;
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+  final fake = repo ?? FakeUnitRepo();
+  final c = ProviderContainer(overrides: [
+    authRepositoryProvider.overrideWithValue(LiveAuth(user)),
+    initialUserProvider.overrideWithValue(user),
+    unitRepositoryFactoryProvider.overrideWithValue((_) => fake),
+    clockProvider.overrideWithValue(() => now),
+    precisPackStoreProvider.overrideWithValue(store ?? MemoryPrecisPackStore()),
+  ]);
+  addTearDown(c.dispose);
+  await tester.pumpWidget(UncontrolledProviderScope(container: c, child: const PhoenixApp()));
+  await tester.pumpAndSettle();
+  return (c, fake);
+}
+
+void main() {
+  testWidgets('live cadet sees the unit\'s real announcements, not samples', (tester) async {
+    final (c, _) = await pumpLive(tester, cadet);
+    expect(c.read(isLiveProvider), isTrue);
+    expect(find.text('Real unit notice'), findsOneWidget);
+    expect(find.textContaining('uniform check'), findsNothing); // sample announcement
+    expect(find.text('B CERTIFICATE EXAM'), findsNothing); // no sample exam countdown
+  });
+
+  testWidgets('sample users never touch the backend, even with one configured', (tester) async {
+    final (c, _) = await pumpLive(tester, cadet.copyForTest(isSample: true));
+    expect(c.read(isLiveProvider), isFalse);
+    expect(find.text('Real unit notice'), findsNothing);
+  });
+
+  testWidgets('a failed load shows a banner with retry', (tester) async {
+    final repo = FakeUnitRepo()..failAnnouncements = true;
+    await pumpLive(tester, cadet, repo: repo);
+    expect(find.text("Couldn't load announcements. Check your connection and try again."), findsOneWidget);
+    repo.failAnnouncements = false;
+    await tester.tap(find.text('Retry'));
+    await tester.pumpAndSettle();
+    expect(find.text('Real unit notice'), findsOneWidget);
+  });
+
+  testWidgets('ANO posting goes to the backend; a refusal is shown in the dialog', (tester) async {
+    final (c, repo) = await pumpLive(tester, ano, size: const Size(1280, 900));
+    c.read(routerProvider).go(Routes.commandAnnouncements);
+    await tester.pumpAndSettle();
+
+    Finder inDialog(Finder f) => find.descendant(of: find.byType(AlertDialog), matching: f);
+    Future<void> compose(String title) async {
+      await tester.tap(find.text('Post announcement'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.widgetWithText(TextField, 'Title'), title);
+      await tester.enterText(find.widgetWithText(TextField, 'Message'), 'Body');
+      await tester.tap(inDialog(find.widgetWithText(FilledButton, 'Post announcement')));
+      await tester.pumpAndSettle();
+    }
+
+    repo.failPost = true;
+    await compose('Will fail');
+    expect(find.text("You don't have permission to post the announcement."), findsOneWidget);
+    expect(find.byType(AlertDialog), findsOneWidget); // stays open so nothing is lost
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+
+    repo.failPost = false;
+    await compose('Parade moved to 0800');
+    expect(repo.announcementsList.first.title, 'Parade moved to 0800');
+    expect(find.text('Parade moved to 0800'), findsOneWidget);
+  });
+
+  testWidgets('diary sessions are saved to the backend', (tester) async {
+    final (c, repo) = await pumpLive(tester, cadet);
+    c.read(routerProvider).push(Routes.newDiaryEntry);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Score'), '47');
+    await tester.scrollUntilVisible(find.text('Save session'), 300,
+        scrollable: find.descendant(of: find.byType(DiaryEntryScreen), matching: find.byType(Scrollable)).first);
+    await tester.tap(find.text('Save session'));
+    await tester.pumpAndSettle();
+    expect(repo.diaryList.single.shooting?.score, 47);
+    expect(c.read(diaryProvider).single.shooting?.score, 47);
+  });
+
+  Future<void> ask(WidgetTester tester, String q) async {
+    await tester.enterText(find.widgetWithText(TextField, 'Ask a question'), q);
+    await tester.tap(find.byTooltip('Send'));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('online, the AI writes the answer from the passages the phone found; Explain simply asks again', (tester) async {
+    final (c, repo) = await pumpLive(tester, cadet);
+    await tester.tap(find.text('Ustaad'));
+    await tester.pumpAndSettle();
+    expect(find.text('Offline ready'), findsOneWidget);
+
+    await ask(tester, 'Who is the supreme commander?');
+    expect(repo.lastAiModes, ['answer']);
+    expect(repo.lastAiChunks, contains(1)); // the passage that holds the answer
+    expect(find.text('USTAAD · FROM YOUR PRÉCIS'), findsOneWidget);
+    expect(find.textContaining('The President of India is the Supreme Commander', findRichText: true), findsOneWidget);
+    expect(find.textContaining('Special Subject (Army) JD/JW (2025) · AF I · Introduction · p. 2'), findsOneWidget);
+
+    // The précis lines it was written from, on demand.
+    await tester.tap(find.text('Show the précis lines'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Demo Army Book · AF I · Introduction · p. 2'), findsWidgets);
+
+    await tester.tap(find.text('Explain simply'));
+    await tester.pumpAndSettle();
+    expect(repo.lastAiModes, ['answer', 'simple']);
+    expect(find.text('AI EXPLANATION'), findsOneWidget);
+    expect(c.read(precisPackStoreProvider), isA<MemoryPrecisPackStore>());
+  });
+
+  testWidgets('quick facts answer at once, without spending the AI quota', (tester) async {
+    final (_, repo) = await pumpLive(tester, cadet, size: const Size(420, 1400));
+    await tester.tap(find.text('Ustaad'));
+    await tester.pumpAndSettle();
+    await ask(tester, 'who is dg ncc');
+    expect(find.text('QUICK FACT'), findsOneWidget);
+    expect(repo.aiCalls, 0);
+  });
+
+  testWidgets('Ustaad says plainly when the précis does not cover a question', (tester) async {
+    await pumpLive(tester, cadet);
+    await tester.tap(find.text('Ustaad'));
+    await tester.pumpAndSettle();
+    await ask(tester, 'who won the football league');
+    expect(find.textContaining("isn't in your précis"), findsOneWidget);
+  });
+
+  testWidgets('offline, Ustaad answers from the copy saved on the phone', (tester) async {
+    final store = MemoryPrecisPackStore()..saved = FakeUnitRepo.demoPassages;
+    await pumpLive(tester, cadet, repo: FakeUnitRepo()..offline = true, store: store);
+    await tester.tap(find.text('Ustaad'));
+    await tester.pumpAndSettle();
+    await ask(tester, 'what is magnetic north');
+    expect(find.textContaining(RegExp('matching lines from your précis')), findsOneWidget);
+    expect(find.text('(b)'), findsOneWidget); // the list marker, shown on its own
+    expect(find.textContaining('Magnetic north is shown by the compass needle.', findRichText: true), findsOneWidget);
+  });
+
+  testWidgets('first launch offline explains the download failed and offers retry', (tester) async {
+    final repo = FakeUnitRepo()..offline = true;
+    await pumpLive(tester, cadet, repo: repo);
+    await tester.tap(find.text('Ustaad'));
+    await tester.pumpAndSettle();
+    expect(find.text("Couldn't download the study material. Check your connection and try again."), findsOneWidget);
+    repo.offline = false;
+    await tester.tap(find.text('Try again'));
+    await tester.pumpAndSettle();
+    expect(find.text('Offline ready'), findsOneWidget);
+  });
+
+  testWidgets('ANO approves a précis question and it joins the practice bank', (tester) async {
+    final (c, repo) = await pumpLive(tester, ano, size: const Size(1280, 900));
+    expect(c.read(questionBankProvider), isEmpty);
+    c.read(routerProvider).push(Routes.review);
+    await tester.pumpAndSettle();
+    expect(find.text('Who is the Supreme Commander?'), findsOneWidget);
+    expect(find.text('Special Subject (Army) JD/JW (2025) · AF I · Q1 · p. 12'), findsOneWidget);
+    // Approve is disabled until an answer is picked.
+    expect(tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Approve answer')).onPressed, isNull);
+    await tester.tap(find.text('President'));
+    await tester.pump();
+    await tester.tap(find.text('Approve answer'));
+    await tester.pumpAndSettle();
+    expect(repo.approvals, [('r1', 1)]);
+    expect(find.text('All caught up'), findsOneWidget);
+    expect(c.read(questionBankProvider).single.correctIndex, 1);
+  });
+
+  testWidgets('cadets cannot open the review screen', (tester) async {
+    final (c, _) = await pumpLive(tester, cadet);
+    c.read(routerProvider).go(Routes.review);
+    await tester.pumpAndSettle();
+    expect(c.read(routerProvider).state.matchedLocation, Routes.today);
+  });
+
+  testWidgets('Ustaad shows figures from the pages it quotes, and asks for their links', (tester) async {
+    final (c, repo) = await pumpLive(tester, cadet);
+    await tester.tap(find.text('Ustaad'));
+    await tester.pumpAndSettle();
+    await ask(tester, 'what is magnetic north');
+    expect(find.bySemanticsLabel('Figure from MR III, page 185'), findsOneWidget);
+    expect(repo.urlRequests, contains('demo/f2.webp'));
+    expect(c.read(precisProvider).figures, hasLength(2));
+  });
+
+  testWidgets('signing out deletes the précis saved on the phone', (tester) async {
+    final store = MemoryPrecisPackStore();
+    final (c, _) = await pumpLive(tester, cadet, store: store);
+    await tester.tap(find.text('Ustaad'));
+    await tester.pumpAndSettle();
+    expect(store.saved, isNotEmpty);
+    expect(store.savedFigures, isNotEmpty);
+    await c.read(authControllerProvider.notifier).signOut();
+    await tester.pumpAndSettle();
+    expect(store.saved, isNull);
+    expect(store.savedFigures, isEmpty);
+  });
+
+  List<Question> wtBank(int n) => [
+        for (var i = 0; i < n; i++)
+          Question(id: 'b$i', subject: i.isEven ? 'Weapon Training' : 'Leadership', prompt: 'Question $i?',
+              options: const ['Alpha', 'Bravo', 'Charlie', 'Delta'], correctIndex: 0),
+      ];
+
+  testWidgets('ANO hosts a test from approved questions and sees it listed', (tester) async {
+    final repo = FakeUnitRepo()..bank.addAll(wtBank(30));
+    final (c, _) = await pumpLive(tester, ano, repo: repo, size: const Size(1280, 1000));
+    c.read(routerProvider).go(Routes.tests);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New test'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Test name'), 'Weekly test 1');
+    await tester.tap(find.text('In-app test'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Chosen subjects'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Weapon Training · 15'));
+    await tester.enterText(find.widgetWithText(TextField, 'Questions'), '10');
+    await tester.tap(find.text('Create test'));
+    await tester.pumpAndSettle();
+    final created = repo.testsList.single;
+    expect(created.title, 'Weekly test 1');
+    expect(created.questionIds, hasLength(10));
+    expect(repo.testQs['h1']!.every((q) => q.subject == 'Weapon Training'), isTrue);
+    expect(created.marking.wrong, 0.5); // B Cert negative marking by default
+    expect(created.closesAt, now.add(const Duration(days: 7)));
+    expect(find.text('Weekly test 1'), findsOneWidget);
+  });
+
+  Future<FakeUnitRepo> repoWithTest() async {
+    final repo = FakeUnitRepo()..bank.addAll(wtBank(4));
+    await repo.createTest(NewTest(title: 'Unit test 1', durationMinutes: 10, marking: const MarkingScheme(wrong: 0.5),
+        questionIds: const ['b0', 'b1', 'b2'], opensAt: now.subtract(const Duration(hours: 1)),
+        closesAt: now.add(const Duration(days: 2))));
+    return repo;
+  }
+
+  Future<void> answerAll(WidgetTester tester, List<String> picks) async {
+    for (final (i, pick) in picks.indexed) {
+      await tester.tap(find.text(pick));
+      await tester.pump();
+      await tester.tap(find.text(i == picks.length - 1 ? 'Submit test' : 'Next question'));
+      await tester.pumpAndSettle();
+    }
+  }
+
+  testWidgets('cadet takes a hosted test once; the server marks it and the key stays locked', (tester) async {
+    final repo = await repoWithTest();
+    final (c, _) = await pumpLive(tester, cadet, repo: repo);
+    await tester.tap(find.text('Learn'));
+    await tester.pumpAndSettle();
+    expect(c.read(testsProvider).single.title, 'Unit test 1');
+    c.read(routerProvider).push(Routes.quiz('h1'));
+    await tester.pumpAndSettle();
+    await answerAll(tester, ['Alpha', 'Bravo', 'Alpha']); // 2 right, 1 wrong: 2 + 2 - 0.5
+    expect(repo.submissions.single.$2.length, 3);
+    expect(find.text('3.5 / 6'), findsOneWidget);
+    expect(find.text('REVIEW ANSWERS'), findsNothing);
+    expect(find.textContaining('answer key unlocks'), findsOneWidget);
+    expect(c.read(testsProvider).single.myScore, 3.5);
+
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+    c.read(routerProvider).push(Routes.quiz('h1'));
+    await tester.pumpAndSettle();
+    expect(find.text('Submitted'), findsOneWidget); // no second attempt
+  });
+
+  testWidgets('a failed submission keeps the answers and can be sent again', (tester) async {
+    final repo = (await repoWithTest())..failSubmit = true;
+    final (c, _) = await pumpLive(tester, cadet, repo: repo);
+    await tester.tap(find.text('Learn'));
+    await tester.pumpAndSettle();
+    c.read(routerProvider).push(Routes.quiz('h1'));
+    await tester.pumpAndSettle();
+    await answerAll(tester, ['Alpha', 'Alpha', 'Alpha']);
+    expect(find.text('Not submitted yet'), findsOneWidget);
+    repo.failSubmit = false;
+    await tester.tap(find.text('Submit again'));
+    await tester.pumpAndSettle();
+    expect(find.text('6 / 6'), findsOneWidget);
+  });
+
+  testWidgets('after the test closes, the cadet can review their answers', (tester) async {
+    final repo = await repoWithTest();
+    await repo.submitAttempt('h1', {'b0': 0, 'b1': 2});
+    final closed = repo.testsList.single;
+    repo.testsList[0] = TestDefinition(id: closed.id, title: closed.title, durationMinutes: 10,
+        marking: closed.marking, questionIds: closed.questionIds, opensAt: closed.opensAt,
+        closesAt: now.subtract(const Duration(minutes: 1)));
+    final (c, _) = await pumpLive(tester, cadet, repo: repo, size: const Size(420, 2400));
+    await tester.tap(find.text('Learn'));
+    await tester.pumpAndSettle();
+    c.read(routerProvider).push(Routes.quiz('h1'));
+    await tester.pumpAndSettle();
+    expect(find.text('1.5 / 6'), findsOneWidget);
+    expect(find.text('REVIEW ANSWERS'), findsOneWidget);
+    expect(find.text('You chose: Charlie'), findsOneWidget);
+  });
+
+  testWidgets('ANO sees who submitted, scores and weak subjects', (tester) async {
+    final repo = await repoWithTest();
+    await repo.submitAttempt('h1', {'b0': 0, 'b1': 3, 'b2': 0});
+    final (c, _) = await pumpLive(tester, ano, repo: repo, size: const Size(1280, 2400));
+    c.read(routerProvider).push(Routes.testResults('h1'));
+    await tester.pumpAndSettle();
+    expect(find.text('1 / 1'), findsOneWidget); // submitted / cadets
+    expect(find.text('58%'), findsWidgets); // 3.5 of 6
+    expect(find.text('Meera Nair'), findsOneWidget);
+    expect(find.text('WEAK SUBJECTS ACROSS THE UNIT'), findsOneWidget);
+    expect(find.text('0% right'), findsOneWidget); // the Leadership question
+  });
+
+  testWidgets('ANO makes a cadet JUO from the roster; the rank follows', (tester) async {
+    final (c, repo) = await pumpLive(tester, ano, size: const Size(1280, 1000));
+    c.read(routerProvider).go(Routes.cadets);
+    await tester.pumpAndSettle();
+    expect(find.text('Sample roster'), findsNothing);
+    await tester.tap(find.text('Meera Nair'));
+    await tester.pumpAndSettle();
+    expect(find.text('Appointment'), findsOneWidget);
+    await tester.tap(find.widgetWithText(ChoiceChip, 'JUO').last); // the appointment, not the rank
+    await tester.pump();
+    expect(find.textContaining('assists the CSUO / SUO'), findsOneWidget);
+    await tester.tap(find.text('Save changes'));
+    await tester.pumpAndSettle();
+    expect(repo.memberUpdates.single, ('u1', AppRole.seniorCadet, 'JUO'));
+    expect(repo.lastAppointment, Appointment.juo);
+    expect(find.text('JUO Meera Nair'), findsOneWidget);
+  });
+
+  testWidgets('cadet edits their own profile', (tester) async {
+    final auth = LiveAuth(cadet);
+    tester.view.physicalSize = const Size(420, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final c = ProviderContainer(overrides: [
+      authRepositoryProvider.overrideWithValue(auth),
+      initialUserProvider.overrideWithValue(cadet),
+      unitRepositoryFactoryProvider.overrideWithValue((_) => FakeUnitRepo()),
+      clockProvider.overrideWithValue(() => now),
+      precisPackStoreProvider.overrideWithValue(MemoryPrecisPackStore()),
+    ]);
+    addTearDown(c.dispose);
+    await tester.pumpWidget(UncontrolledProviderScope(container: c, child: const PhoenixApp()));
+    await tester.pumpAndSettle();
+    c.read(routerProvider).push(Routes.editProfile);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Regimental number'), 'ka2024sda0001');
+    await tester.tap(find.text('CPL'));
+    await tester.tap(find.text('2nd year'));
+    await tester.scrollUntilVisible(find.text('Save profile'), 200,
+        scrollable: find.descendant(of: find.byType(EditProfileScreen), matching: find.byType(Scrollable)).first);
+    await tester.tap(find.text('Save profile'));
+    await tester.pumpAndSettle();
+    final saved = auth.profileSaves.single;
+    expect(saved.regimentalNo, 'KA2024SDA0001');
+    expect(saved.rank, 'CPL');
+    expect(saved.trainingYear, 2);
+    expect(saved.role, AppRole.cadet);
+    expect(c.read(authControllerProvider)!.displayName, 'CPL Meera Nair');
+  });
+
+  testWidgets('a chapter code shared by two books shows only its own book and figures', (tester) async {
+    final repo = _TwoBooksRepo();
+    final (c, _) = await pumpLive(tester, cadet, repo: repo, size: const Size(420, 1600));
+    await tester.tap(find.text('Ustaad'));
+    await tester.pumpAndSettle(); // downloads the précis
+    expect(c.read(precisProvider).books, containsAll(['Demo Army Book', 'Army SD/SW (Oct 2025)']));
+    expect(c.read(precisProvider).figuresFor('AF I', book: 'Army SD/SW (Oct 2025)').single.id, 'f9');
+
+    c.read(routerProvider).push(Routes.book('Army SD/SW (Oct 2025)'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Armed Forces Revised'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Commands of the Army', findRichText: true), findsWidgets);
+    expect(find.textContaining('responsibility for national defence', findRichText: true), findsNothing);
+    expect(find.bySemanticsLabel('Figure from AF I, page 4'), findsOneWidget); // inline, in its section
+    expect(find.text('IN 30 SECONDS'), findsOneWidget);
+    expect(find.text('Equivalent officer ranks'), findsOneWidget); // AF I's picture note
+    await tester.scrollUntilVisible(find.text('Mark as studied'), 400, scrollable: find.byType(Scrollable).first);
+    expect(find.text('Mark as studied'), findsOneWidget);
+  });
+
+  testWidgets('quick facts answer what the précis gets wrong, with when they were checked', (tester) async {
+    await pumpLive(tester, cadet, size: const Size(420, 1400));
+    await tester.tap(find.text('Ustaad'));
+    await tester.pumpAndSettle();
+    await ask(tester, 'who is dg ncc');
+    expect(find.text('QUICK FACT'), findsOneWidget);
+    expect(find.textContaining('Lt Gen Virendra Vats', findRichText: true), findsOneWidget);
+    expect(find.textContaining('checked Nov 2026'), findsOneWidget);
+  });
+
+  testWidgets('Explain simply sends the passages already shown, and renders bullets and bold', (tester) async {
+    final repo = _ExplainRepo();
+    await pumpLive(tester, cadet, repo: repo, size: const Size(420, 1600));
+    await tester.tap(find.text('Ustaad'));
+    await tester.pumpAndSettle();
+    await ask(tester, 'what is magnetic north');
+    await tester.tap(find.text('Explain simply'));
+    await tester.pumpAndSettle();
+    expect(repo.lastChunkIds, contains(2));
+    expect(find.text('•'), findsWidgets);
+    expect(find.textContaining('**'), findsNothing);
+    expect(find.textContaining('Magnetic north', findRichText: true), findsWidgets);
+  });
+
+  CalendarEvent rollCallEvent() => CalendarEvent(
+        id: 'ev1', title: 'Republic Day rehearsal', kind: EventKind.parade,
+        startsAt: now.add(const Duration(days: 2)), location: 'RVCE ground',
+        details: 'Reporting 0630. Full uniform.', needsResponse: true,
+        respondBy: now.add(const Duration(days: 1)));
+
+  testWidgets('cadet replies to a roll-call from Today, with a reason when absent', (tester) async {
+    final repo = FakeUnitRepo()..eventsList.add(rollCallEvent());
+    await pumpLive(tester, cadet, repo: repo);
+    expect(find.text('NEEDS YOUR REPLY'), findsOneWidget);
+    expect(find.text('Republic Day rehearsal'), findsWidgets);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, "Can't come"));
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    await tester.tap(find.widgetWithText(FilledButton, 'Send'));
+    await tester.pump();
+    expect(find.text('Write why you need to be absent.'), findsOneWidget);
+    await tester.tap(find.text('University exam'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Send'));
+    await tester.pumpAndSettle();
+
+    expect(repo.responsesList.single.status, Attendance.absent);
+    expect(repo.responsesList.single.reason, 'University exam');
+    expect(find.text('NEEDS YOUR REPLY'), findsNothing);
+    expect(find.textContaining("you can't come"), findsOneWidget);
+
+    // Changing their mind on the event page
+    await tester.tap(find.text('Republic Day rehearsal'));
+    await tester.pumpAndSettle();
+    expect(find.text('Reporting 0630. Full uniform.'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, "I'll be there"));
+    await tester.pumpAndSettle();
+    expect(repo.responsesList.single.status, Attendance.coming);
+    expect(find.text("You're coming"), findsOneWidget);
+  });
+
+  testWidgets('ANO adds a roll-call event and sees counts, reasons and who has not replied', (tester) async {
+    final repo = FakeUnitRepo();
+    repo.membersList.addAll(const [
+      AppUser(id: 'u3', fullName: 'Arjun Rao', role: AppRole.cadet, unitId: 'unit-1'),
+      AppUser(id: 'u4', fullName: 'Divya Shetty', role: AppRole.seniorCadet, unitId: 'unit-1'),
+    ]);
+    final (c, _) = await pumpLive(tester, ano, repo: repo, size: const Size(1280, 1000));
+    c.read(routerProvider).go(Routes.commandCalendar);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Add event'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Title'), 'Social service camp');
+    await tester.enterText(find.widgetWithText(TextField, 'Message for cadets (optional)'), 'Bring gloves.');
+    expect(find.text('Ask cadets to confirm'), findsOneWidget);
+    await tester.tap(find.descendant(of: find.byType(AlertDialog), matching: find.widgetWithText(FilledButton, 'Add event')));
+    await tester.pumpAndSettle();
+    final ev = repo.eventsList.single;
+    expect(ev.needsResponse, isTrue);
+    expect(ev.details, 'Bring gloves.');
+    expect(ev.respondBy, ev.startsAt.subtract(const Duration(hours: 12)));
+
+    repo.responsesList.addAll([
+      EventResponse(eventId: ev.id, cadetId: 'u1', cadetName: 'Meera Nair', status: Attendance.coming),
+      EventResponse(eventId: ev.id, cadetId: 'u3', cadetName: 'Arjun Rao', status: Attendance.absent, reason: 'Lab internal'),
+    ]);
+    await tester.tap(find.text('Social service camp'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Coming · refreshments'), findsOneWidget);
+    expect(find.text('Arjun Rao'), findsOneWidget);
+    expect(find.text('Lab internal'), findsOneWidget);
+    await tester.tap(find.text('No reply 1'));
+    await tester.pumpAndSettle();
+    expect(find.text('Divya Shetty'), findsOneWidget);
+    expect(find.text('Kavitha Iyer'), findsNothing); // the ANO isn't on her own roll-call
+
+    // On the day: tick who turned up
+    await tester.tap(find.text('Coming 1'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Mark who came'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(CheckboxListTile, 'Meera Nair'));
+    await tester.pumpAndSettle();
+    expect(repo.responsesList.firstWhere((r) => r.cadetId == 'u1').attended, isTrue);
+    expect(find.text('Present on the day'), findsOneWidget);
+  });
+
+  testWidgets('a CSUO manages the roster too; a JUO cannot', (tester) async {
+    const csuo = AppUser(id: 'u5', fullName: 'Rohan Das', role: AppRole.seniorCadet, appointment: Appointment.csuo,
+        unitName: 'Test Unit', unitId: 'unit-1');
+    const juo = AppUser(id: 'u6', fullName: 'Isha Rao', role: AppRole.seniorCadet, appointment: Appointment.juo,
+        unitName: 'Test Unit', unitId: 'unit-1');
+    expect(csuo.isCommand, isTrue);
+    expect(juo.isCommand, isFalse);
+    expect(ano.isCommand, isTrue);
+    expect(ano.canHandleQueries(toAllSeniors: true), isFalse); // never the ANO
+    expect(juo.canHandleQueries(), isFalse);
+    expect(juo.canHandleQueries(toAllSeniors: true), isTrue);
+
+    final (c, _) = await pumpLive(tester, csuo, size: const Size(1280, 1000));
+    c.read(routerProvider).go(Routes.cadets);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('tap someone to change'), findsOneWidget);
+    await tester.tap(find.text('Meera Nair'));
+    await tester.pumpAndSettle();
+    expect(find.text('Save changes'), findsOneWidget);
+  });
+
+  testWidgets('OMR mock: generate a draft like the real paper, fix questions, then schedule and publish', (tester) async {
+    final repo = FakeUnitRepo()
+      ..bank.addAll([
+        for (var i = 0; i < 18; i++)
+          Question(id: 'w$i', subject: 'Weapon Training', prompt: 'Weapon question $i?',
+              options: const ['Alpha', 'Bravo', 'Charlie', 'Delta'], correctIndex: 1),
+      ]);
+    final (c, _) = await pumpLive(tester, ano, repo: repo, size: const Size(1280, 1200));
+    c.read(routerProvider).go(Routes.tests);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New test'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Test name'), 'B Cert mock 1');
+    expect(find.textContaining('B Cert 2026'), findsOneWidget);
+    await tester.tap(find.text('Generate draft'));
+    await tester.pumpAndSettle();
+
+    // A draft, laid out like the real paper
+    final draft = repo.testsList.single;
+    expect(draft.isDraft, isTrue);
+    expect(draft.questionIds, hasLength(15)); // Weapon Training only: the bank has nothing else
+    expect(find.textContaining("cadets can't see this yet"), findsOneWidget);
+    expect(find.text('NCC DIRECTORATE KARNATAKA & GOA'), findsOneWidget);
+    expect(find.text('PAPER II – WEAPON TRAINING'), findsOneWidget);
+    expect(find.text('(15X2 = 30 MARKS)'), findsOneWidget);
+    expect(find.textContaining('160 empty'), findsWidgets); // banner + 'Fill 160 empty'
+
+    // Replace Q1 with one of the 3 unused questions
+    final q1 = draft.questionIds[draft.numbers.indexOf(1)];
+    await tester.tap(find.byTooltip('Change Q1'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Replace with another'));
+    await tester.pumpAndSettle();
+    final afterReplace = repo.testsList.single;
+    expect(afterReplace.questionIds[afterReplace.numbers.indexOf(1)], isNot(q1));
+
+    // Write Q16 (first question of Paper III, which is empty)
+    await tester.scrollUntilVisible(find.byTooltip('Change Q16'), 300, scrollable: find.byType(Scrollable).first);
+    await tester.tap(find.byTooltip('Change Q16'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Write a question'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Question'), 'What is the motto of the NCC?');
+    for (final (i, o) in ['Unity and Discipline', 'Service before self', 'Duty first', 'Valour'].indexed) {
+      await tester.enterText(find.widgetWithText(TextField, 'Option ${'ABCD'[i]}'), o);
+    }
+    await tester.tap(find.text('Save question'));
+    await tester.pumpAndSettle();
+    final withQ16 = repo.testsList.single;
+    expect(withQ16.numbers, contains(16));
+    expect(repo.bank.last.prompt, 'What is the motto of the NCC?');
+    expect(repo.bank.last.subject, 'NCC General');
+
+    // Schedule & publish, with a calendar entry
+    await tester.tap(find.text('Schedule & publish'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Publish'));
+    await tester.pumpAndSettle();
+    expect(repo.testsList.single.isDraft, isFalse);
+    expect(repo.published.single.$2, DateTime(2026, 11, 27, 9, 30));
+    final ev = repo.eventsList.single;
+    expect(ev.kind, EventKind.exam);
+    expect(ev.needsResponse, isTrue);
+    expect(find.textContaining('Published'), findsOneWidget);
+  });
+
+  testWidgets('a JUO can build a draft but only the CSUO / SUO / ANO publishes it', (tester) async {
+    const juo = AppUser(id: 'u6', fullName: 'Isha Rao', role: AppRole.seniorCadet, appointment: Appointment.juo,
+        unitName: 'Test Unit', unitId: 'unit-1');
+    final repo = FakeUnitRepo()..bank.addAll(wtBank(16));
+    repo.testsList.add(TestDefinition(id: 'd1', title: 'Draft mock', durationMinutes: 180, marking: bCertPattern.marking,
+        questionIds: [for (final q in repo.bank.take(15)) q.id], numbers: [for (var i = 1; i <= 15; i++) i],
+        mode: TestMode.omr, pattern: 'bcert', isDraft: true));
+    final (c, _) = await pumpLive(tester, juo, repo: repo, size: const Size(1280, 1000));
+    c.read(routerProvider).push(Routes.mockDraft('d1'));
+    await tester.pumpAndSettle();
+    expect(find.text('CSUO / SUO / ANO publishes'), findsOneWidget);
+    final button = tester.widget<FilledButton>(find.ancestor(of: find.text('CSUO / SUO / ANO publishes'), matching: find.byType(FilledButton)));
+    expect(button.onPressed, isNull);
+  });
+
+  testWidgets('anonymous query: cadet asks, CSUO replies and raises it, ANO never sees it', (tester) async {
+    final repo = FakeUnitRepo();
+    // Cadet asks
+    var (c, _) = await pumpLive(tester, cadet, repo: repo);
+    c.read(routerProvider).push(Routes.askSeniors);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('The ANO cannot see it'), findsOneWidget);
+    await tester.tap(find.text('New query'));
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    await tester.tap(find.text('Camp'));
+    await tester.enterText(find.widgetWithText(TextField, 'Title'), 'Seniors shouting at camp');
+    await tester.enterText(find.widgetWithText(TextField, 'What happened / what do you need?'), 'On day 3 some seniors made us stand for hours.');
+    await tester.ensureVisible(find.text('Send anonymously'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Send anonymously'));
+    await tester.pumpAndSettle();
+    expect(find.text('Sent anonymously'), findsOneWidget);
+    final ticket = c.read(queryTicketsProvider).single;
+    expect(ticket, hasLength(24));
+    expect(find.text(formatTicket(ticket)), findsOneWidget);
+    final asked = repo.queriesByTicket[ticket]!;
+    expect(asked.category, QueryCategory.camp);
+    expect(asked.toAllSeniors, isFalse);
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+    expect(find.text('Seniors shouting at camp'), findsOneWidget);
+
+    // CSUO answers it
+    const csuo = AppUser(id: 'u5', fullName: 'Rohan Das', role: AppRole.seniorCadet, appointment: Appointment.csuo,
+        unitName: 'Test Unit', unitId: 'unit-1');
+    await tester.pumpWidget(const SizedBox());
+    (c, _) = await pumpLive(tester, csuo, repo: repo, size: const Size(1280, 1000));
+    expect(find.text('Anonymous queries'), findsOneWidget); // overview card
+    expect(find.text('1 waiting for a reply'), findsOneWidget);
+    await tester.tap(find.text('Anonymous queries'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Seniors shouting at camp'));
+    await tester.pumpAndSettle();
+    expect(find.text('Cadet (anonymous)'), findsOneWidget);
+    await tester.enterText(find.widgetWithText(TextField, 'Reply to the cadet…'), 'We will handle it. Thank you for telling us.');
+    await tester.tap(find.byTooltip('Send'));
+    await tester.pumpAndSettle();
+    expect(repo.queryLog.single, startsWith('senior: We will handle it'));
+    await tester.tap(find.byTooltip('Status'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Mark as raised with the ANO'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Mark as raised'));
+    await tester.pumpAndSettle();
+    expect(repo.queriesByTicket[ticket]!.status, QueryStatus.escalated);
+
+    // The ANO has no card and the inbox is locked
+    await tester.pumpWidget(const SizedBox());
+    (c, _) = await pumpLive(tester, ano, repo: repo, size: const Size(1280, 1000));
+    expect(find.text('Anonymous queries'), findsNothing);
+    c.read(routerProvider).push(Routes.queryInbox);
+    await tester.pumpAndSettle();
+    expect(find.text('Seniors shouting at camp'), findsNothing);
+    expect(find.textContaining('The ANO does not see them'), findsOneWidget);
+  });
+
+  testWidgets('Learn has picture notes; a chapter shows its own diagrams', (tester) async {
+    final (c, _) = await pumpLive(tester, cadet, size: const Size(420, 2400));
+    c.read(routerProvider).go(Routes.learn);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('PICTURE NOTES'), findsOneWidget);
+    c.read(routerProvider).push(Routes.chapter('MR III'));
+    await tester.pumpAndSettle();
+    expect(find.text('The three norths'), findsOneWidget);
+    expect(find.text('Section formations'), findsNothing); // FCBC VII's picture, not this chapter's
+    await tester.tap(find.text('The three norths'));
+    await tester.pumpAndSettle();
+    expect(find.text('Pinch to zoom.'), findsOneWidget);
+  });
+
+  group('row mapping', () {
+    test('tests and attempts map from database rows', () {
+      final t = testFromRow({
+        'id': 't', 'title': 'Weekly', 'description': null, 'duration_minutes': 30, 'marks_correct': 2,
+        'marks_wrong': 0.5, 'opens_at': '2026-11-26T03:30:00Z', 'closes_at': null,
+        'test_questions': [{'question_id': 'q2', 'position': 1}, {'question_id': 'q1', 'position': 0}],
+        'test_attempts': [{'count': 12}],
+      }, myScore: 7);
+      expect(t.questionIds, ['q1', 'q2']);
+      expect(t.attemptCount, 12);
+      expect(t.maxScore, 4);
+      expect(t.marking.wrong, 0.5);
+      expect(t.attempted, isTrue);
+      final a = attemptFromRow({
+        'cadet_id': 'u', 'score': 3.5, 'submitted_at': '2026-11-26T04:00:00Z', 'focus_lost_count': 2,
+        'profiles': {'full_name': 'Meera Nair', 'rank': 'CDT'},
+        'attempt_answers': [{'question_id': 'q1', 'chosen_index': 2}, {'question_id': 'q2', 'chosen_index': null}],
+      });
+      expect(a.cadetName, 'CDT Meera Nair');
+      expect(a.answers, {'q1': 2, 'q2': null});
+      expect(a.focusLost, 2);
+    });
+
+    test('diary entries round-trip through database rows', () {
+      final e = DiaryEntry(
+        id: 'd1',
+        type: SessionType.shooting,
+        date: DateTime(2026, 3, 7, 18, 30),
+        durationMinutes: 45,
+        toImprove: 'Trigger control',
+        mood: 4,
+        sleepHours: 6.5,
+        sharedWithUnit: true,
+        shooting: const ShootingMetrics(rifle: '.22', position: ShootingPosition.kneeling, distanceMetres: 25,
+            rounds: 5, score: 41, groupMm: 12.5),
+      );
+      final row = diaryToRow(e);
+      expect(row['happened_on'], '2026-03-07');
+      expect(row['session_type'], 'shooting');
+      expect(row['visibility'], 'shared_with_unit');
+      final back = diaryFromRow({...row, 'id': 'd1'});
+      expect(back.date, DateTime(2026, 3, 7));
+      expect(back.shooting!.position, ShootingPosition.kneeling);
+      expect(back.shooting!.groupMm, 12.5);
+      expect(back.sharedWithUnit, isTrue);
+      expect(back.toImprove, 'Trigger control');
+      expect(diaryToRow(DiaryEntry(id: 'x', type: SessionType.mapReading, date: DateTime(2026, 1, 2)))['session_type'],
+          'map_reading');
+    });
+
+    test('announcement author shows rank and name; precis questions show their chapter', () {
+      final a = announcementFromRow({
+        'id': 'a', 'title': 'T', 'body': 'B', 'pinned': true, 'created_at': '2026-11-26T03:30:00Z',
+        'author': {'full_name': 'Kavitha Iyer', 'rank': 'Lt'},
+      });
+      expect(a.author, 'Lt Kavitha Iyer');
+      expect(a.pinned, isTrue);
+      final q = questionFromRow({
+        'id': 'q', 'subject': 'Special Subject (Army) JD/JW (2025)', 'prompt': 'P?', 'options': ['a', 'b'],
+        'correct_index': 1, 'explanation': 'MR IV · Q14',
+      });
+      expect(q.subject, 'MR IV');
+      final r = reviewItemFromRow({
+        'id': 'r', 'prompt': 'P?', 'options': ['a', 'b'], 'subject': 'Book', 'explanation': 'AF I · Q3', 'source_page': 12,
+      });
+      expect(r.source, 'Book · AF I · Q3');
+      expect(r.page, 12);
+    });
+
+    test('Ustaad errors explain what to do', () {
+      expect(ustaadErrorMessage(404, {'code': 'NOT_FOUND'}), contains('Ask your ANO to set it up'));
+      expect(ustaadErrorMessage(429, {'error': 'Ustaad is busy right now.'}), 'Ustaad is busy right now.');
+      expect(ustaadErrorMessage(401, null), contains('sign in again'));
+    });
+
+    test('Ustaad replies parse from the function response', () {
+      final r = UstaadReply.fromJson({
+        'answer': 'A [1]', 'covered': true,
+        'sources': [{'n': 1, 'title': 'Book', 'heading': 'AF I · Intro', 'pages': '2–3'}],
+      });
+      expect(r.sources.single.label, 'Book · AF I · Intro · p. 2–3');
+      expect(UstaadReply.fromJson({'answer': 'x'}).covered, isFalse);
+    });
+  });
+}
+
+extension on AppUser {
+  AppUser copyForTest({required bool isSample}) => AppUser(
+        id: id, fullName: fullName, role: role, rank: rank, wing: wing, division: division,
+        unitName: unitName, unitId: unitId, isSample: isSample);
+}
+
+class _TwoBooksRepo extends FakeUnitRepo {
+  @override
+  Future<List<PrecisPassage>> precisPassages() async => [
+        ...FakeUnitRepo.demoPassages,
+        const PrecisPassage(id: 9, title: 'Army SD/SW (Oct 2025)', heading: 'AF I · Armed Forces Revised', page: 4,
+            content: 'Commands of the Army are headed by an Army Commander.'),
+      ];
+
+  @override
+  Future<List<PrecisFigure>> figures() async => [
+        ...FakeUnitRepo.demoFigures,
+        const PrecisFigure(id: 'f9', title: 'Army SD/SW (Oct 2025)', chapterCode: 'AF I', page: 4, path: 'x/f9.webp'),
+      ];
+}
+
+class _ExplainRepo extends FakeUnitRepo {
+  List<int> lastChunkIds = const [];
+
+  @override
+  Future<UstaadReply> askUstaad(String question,
+      {List<int> chunkIds = const [], List<String> facts = const [], String mode = 'simple'}) async {
+    lastChunkIds = chunkIds;
+    return const UstaadReply(
+      answer: '**Magnetic north** is where a compass needle points [1].\n- It moves slowly over time\n  * nested point\nRemember: compass = magnetic.',
+      covered: true,
+      sources: [UstaadSource(n: 1, title: 'Demo Map Book', heading: 'MR III · Types of North', pages: '185')],
+    );
+  }
+}

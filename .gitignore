@@ -1,0 +1,9 @@
+# Précis PDFs and everything extracted from them are DGNCC copyright
+# ("may not be reproduced by any person or agency in any manner").
+# They stay out of this public repository; see docs/CONTENT.md.
+content/sources/
+content/build/
+
+__pycache__/
+.pytest_cache/
+test/preview/*.png

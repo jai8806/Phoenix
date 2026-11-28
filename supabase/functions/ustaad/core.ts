@@ -1,0 +1,188 @@
+// Ustaad's core: prompt building and model calls, kept free of Supabase so it
+// can be tested on its own. The model provider is swappable: Gemini (free
+// tier) by default, or Anthropic Claude.
+
+export interface Passage {
+  chunk_id: number;
+  document_title: string;
+  heading: string | null;
+  page: number | null;
+  page_end: number | null;
+  content: string;
+}
+
+export interface Source {
+  n: number;
+  title: string;
+  heading: string | null;
+  pages: string | null;
+}
+
+export interface Answer {
+  answer: string;
+  sources: Source[];
+  covered: boolean;
+  /** True when the passages didn't cover it and the model answered from general knowledge. */
+  general?: boolean;
+}
+
+export type Mode = "answer" | "simple";
+
+export const ANSWER_PROMPT = `You are Ustaad, a study assistant for NCC (National Cadet Corps) cadets in India preparing for the B and C Certificate exams.
+Answer the cadet's question accurately, using the checked facts and the numbered précis passages provided.
+
+How to answer:
+- Read every passage, find the ones that actually answer the question, and answer exactly what was asked.
+- Checked facts are verified and newer than the précis: when they disagree, follow the checked facts.
+- Combine information from several passages when needed (for example a full list split across passages).
+- Cite the passages you used with their numbers at the end of the line they support, e.g. [1] or [2][3]. Do not cite checked facts.
+- If the passages and facts do not contain the answer but you are confident from general knowledge of the NCC and
+  Indian Armed Forces, answer briefly and begin your reply with "GENERAL:". Never invent names, numbers or dates.
+- If you cannot answer reliably, reply exactly: NOT_COVERED
+- Do not give weapon-handling instructions beyond the passages; live firing is only under a qualified instructor.
+
+Format:
+- Start with a direct one or two sentence answer, in simple English (Hindi only if the question is in Hindi script).
+- Then, if useful, up to 6 short points, each on its own line starting with "- ". No nested points, headings or tables.
+- Use **bold** for key terms, names and numbers.
+- Keep it under 170 words.`;
+
+export const NOT_COVERED =
+  "I couldn't find this in your unit's study material. Ask your ANO, or try asking with words from the précis.";
+
+export const SYSTEM_PROMPT = `You are Ustaad, a study assistant for NCC (National Cadet Corps) cadets in India preparing for the B and C Certificate exams.
+Explain the answer simply, using ONLY the checked facts and the numbered précis passages provided.
+
+Content rules:
+- Use only what the checked facts and passages state. Never add outside knowledge.
+- Checked facts are newer than the précis: when they disagree, follow the checked facts.
+- Answer exactly what was asked. If a passage is about something else, ignore it.
+- If neither the facts nor the passages answer the question, reply exactly: NOT_COVERED
+- Cite passages with their numbers at the end of the line they support, e.g. [1] or [2][3]. Do not cite checked facts.
+- Do not give weapon-handling instructions beyond the passages; live firing is only under a qualified instructor.
+
+Style rules:
+- Write in simple English, like a senior cadet explaining to a junior. Use Hindi only if the question is written in Hindi.
+- Start with a one-sentence direct answer.
+- Then at most 5 short points, each on its own line starting with "- ". No nested points.
+- Use **bold** only for key terms, names and numbers. No headings, no tables, no other markdown.
+- End with one line starting "Remember:" giving a memory tip, if one helps.
+- Keep it under 140 words.`;
+
+export function pagesLabel(p: Pick<Passage, "page" | "page_end">): string | null {
+  if (p.page == null) return null;
+  return p.page_end && p.page_end !== p.page ? `${p.page}–${p.page_end}` : `${p.page}`;
+}
+
+export function buildUserPrompt(question: string, passages: Passage[], facts: string[] = []): string {
+  const blocks = passages.map((p, i) => {
+    const pages = pagesLabel(p);
+    const where = [p.document_title, p.heading, pages ? `p. ${pages}` : null].filter(Boolean).join(" · ");
+    return `[${i + 1}] (${where})\n${p.content}`;
+  });
+  const checked = facts.length ? `Checked facts:\n${facts.map((f) => `* ${f}`).join("\n")}\n\n` : "";
+  return `${checked}Précis passages:\n\n${blocks.join("\n\n")}\n\nCadet's question: ${question}`;
+}
+
+/** Puts the passages the app already showed first, then fills up from search, without repeats. */
+export function mergePassages(chosen: Passage[], searched: Passage[], max = 6): Passage[] {
+  const seen = new Set<number>();
+  const out: Passage[] = [];
+  for (const p of [...chosen, ...searched]) {
+    if (seen.has(p.chunk_id) || out.length >= max) continue;
+    seen.add(p.chunk_id);
+    out.push(p);
+  }
+  return out;
+}
+
+/** Keeps only the sources the answer actually cites, in citation order. */
+export function citedSources(answer: string, passages: Passage[]): Source[] {
+  const seen = new Set<number>();
+  for (const m of answer.matchAll(/\[(\d{1,2})\]/g)) {
+    const n = Number(m[1]);
+    if (n >= 1 && n <= passages.length) seen.add(n);
+  }
+  return [...seen].map((n) => {
+    const p = passages[n - 1];
+    return { n, title: p.document_title, heading: p.heading, pages: pagesLabel(p) };
+  });
+}
+
+export type Provider = "gemini" | "anthropic";
+
+export interface ModelConfig {
+  provider: Provider;
+  apiKey: string;
+  model: string;
+}
+
+export function modelConfig(env: (k: string) => string | undefined): ModelConfig {
+  const provider = (env("LLM_PROVIDER") ?? "gemini").toLowerCase() as Provider;
+  if (provider === "anthropic") {
+    const apiKey = env("ANTHROPIC_API_KEY");
+    if (!apiKey) throw new ConfigError("ANTHROPIC_API_KEY is not set");
+    return { provider, apiKey, model: env("LLM_MODEL") ?? "claude-haiku-5-5" };
+  }
+  const apiKey = env("GEMINI_API_KEY");
+  if (!apiKey) throw new ConfigError("GEMINI_API_KEY is not set");
+  return { provider: "gemini", apiKey, model: env("LLM_MODEL") ?? "gemini-3.5-flash-lite" };
+}
+
+export class ConfigError extends Error {}
+export class ModelError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
+type Fetch = typeof fetch;
+
+/** Calls the configured model and returns its text reply. */
+export async function callModel(cfg: ModelConfig, system: string, user: string, fetcher: Fetch = fetch): Promise<string> {
+  if (cfg.provider === "anthropic") {
+    const res = await fetcher("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": cfg.apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+      body: JSON.stringify({ model: cfg.model, max_tokens: 800, system, messages: [{ role: "user", content: user }] }),
+    });
+    if (!res.ok) throw new ModelError(`Anthropic ${res.status}: ${await res.text()}`, res.status);
+    const data = await res.json();
+    return (data.content ?? []).filter((b: { type: string }) => b.type === "text")
+      .map((b: { text: string }) => b.text).join("").trim();
+  }
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(cfg.model)}:generateContent`;
+  const res = await fetcher(url, {
+    method: "POST",
+    headers: { "x-goog-api-key": cfg.apiKey, "content-type": "application/json" },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: system }] },
+      contents: [{ role: "user", parts: [{ text: user }] }],
+      generationConfig: { temperature: 0.2, maxOutputTokens: 800 },
+    }),
+  });
+  if (!res.ok) throw new ModelError(`Gemini ${res.status}: ${await res.text()}`, res.status);
+  const data = await res.json();
+  const parts = data.candidates?.[0]?.content?.parts ?? [];
+  return parts.map((p: { text?: string }) => p.text ?? "").join("").trim();
+}
+
+/** Full answer flow once passages have been retrieved. */
+export async function answerQuestion(
+  question: string,
+  passages: Passage[],
+  cfg: ModelConfig,
+  fetcher: Fetch = fetch,
+  facts: string[] = [],
+  mode: Mode = "simple",
+): Promise<Answer> {
+  if (mode === "simple" && passages.length === 0 && facts.length === 0) {
+    return { answer: NOT_COVERED, sources: [], covered: false };
+  }
+  const system = mode === "answer" ? ANSWER_PROMPT : SYSTEM_PROMPT;
+  const raw = await callModel(cfg, system, buildUserPrompt(question, passages, facts), fetcher);
+  if (!raw || raw.includes("NOT_COVERED")) return { answer: NOT_COVERED, sources: [], covered: false };
+  const general = mode === "answer" && /^\s*GENERAL:/i.test(raw);
+  const text = raw.replace(/^\s*GENERAL:\s*/i, "").trim();
+  return { answer: text, sources: general ? [] : citedSources(text, passages), covered: true, general };
+}
