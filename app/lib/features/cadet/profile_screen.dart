@@ -81,6 +81,16 @@ class ProfileScreen extends ConsumerWidget {
             ),
           ),
         ),
+        const SectionHeader('Help'),
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.shield_outlined),
+            title: const Text('Ask a senior anonymously'),
+            subtitle: const Text('Only the CSUO / SUO read it. Your name is never stored; the ANO does not see it.'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => context.push(Routes.askSeniors),
+          ),
+        ),
         const SectionHeader('Account'),
         ListCard(children: [
           if (user.role.canAdminister)

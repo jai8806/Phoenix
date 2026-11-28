@@ -60,6 +60,16 @@ class TodayScreen extends ConsumerWidget {
                 message: 'Notices from your ANO and senior cadets will appear here.')
           else
             ListCard(children: [for (final a in announcements) AnnouncementTile(a, now: now)]),
+          const SizedBox(height: Space.lg),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.shield_outlined),
+              title: const Text('Something bothering you?'),
+              subtitle: const Text('Ask a senior anonymously. Your name is never stored.'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => context.push(Routes.askSeniors),
+            ),
+          ),
         ]),
       ),
     );

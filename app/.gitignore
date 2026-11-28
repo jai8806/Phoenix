@@ -51,3 +51,4 @@ app.*.map.json
 *.apk
 *.aab
 /android/build/
+test/preview/out/

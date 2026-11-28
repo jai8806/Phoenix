@@ -54,7 +54,7 @@ class ProgressScreen extends ConsumerWidget {
             for (final (paper, pct) in paperPercents(latestMock, ExamPattern.byId(latestMock.pattern!)))
               ListTile(
                 leading: Icon(pct >= 33 ? Icons.check_circle : Icons.cancel, color: pct >= 33 ? context.status.success : c.error),
-                title: Text(paper.title.replaceFirst(RegExp(r'^PAPER - [IVX]+ : '), '')),
+                title: Text(paper.shortTitle),
                 trailing: Text('${pct.round()}%', style: t.titleSmall),
               ),
           ]),
@@ -181,7 +181,7 @@ class UnitPerformanceScreen extends ConsumerWidget {
                 leading: Icon(Icons.warning_amber_rounded, color: context.status.warning),
                 title: Text(r.cadetName),
                 subtitle: Text([
-                  for (final (p, pct) in r.failing) '${p.title.replaceFirst(RegExp(r'^PAPER - [IVX]+ : '), '')} ${pct.round()}%',
+                  for (final (p, pct) in r.failing) '${p.shortTitle} ${pct.round()}%',
                 ].join(' · ')),
                 trailing: Text(r.testTitle, style: t.bodySmall),
               ),

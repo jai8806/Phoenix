@@ -24,6 +24,8 @@ import '../../features/command/roster_screen.dart';
 import '../../features/command/test_results_screen.dart';
 import '../../features/omr/exam_screen.dart';
 import '../../features/shared/event_screen.dart';
+import '../../features/command/mock_draft_screen.dart';
+import '../../features/shared/queries_screens.dart';
 import '../../features/omr/progress_screens.dart';
 import '../../features/command/tests_screen.dart';
 import '../../features/shared/announcements_screen.dart';
@@ -61,6 +63,9 @@ abstract final class Routes {
   static const knowledge = '/command/knowledge';
   static const review = '/command-review';
   static String testResults(String id) => '/command-results/${Uri.encodeComponent(id)}';
+  static String mockDraft(String id) => '/command-draft/${Uri.encodeComponent(id)}';
+  static const askSeniors = '/ask';
+  static const queryInbox = '/command-queries';
 
   static String home(AppUser user) => user.role.canAdminister ? overview : today;
 }
@@ -114,6 +119,9 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(path: Routes.newDiaryEntry, builder: (_, _) => const DiaryEntryScreen()),
       GoRoute(path: Routes.review, builder: (_, _) => const ReviewScreen()),
+      GoRoute(path: Routes.askSeniors, builder: (_, _) => const AskSeniorsScreen()),
+      GoRoute(path: Routes.queryInbox, builder: (_, _) => const QueryInboxScreen()),
+      GoRoute(path: '/command-draft/:id', builder: (_, s) => MockDraftScreen(testId: Uri.decodeComponent(s.pathParameters['id']!))),
       GoRoute(
         path: '/command-results/:id',
         builder: (_, s) => TestResultsScreen(testId: Uri.decodeComponent(s.pathParameters['id']!)),

@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'models/comms.dart';
+import 'models/queries.dart';
 import 'models/diary.dart';
 import 'models/figure.dart';
 import 'models/test.dart';
@@ -62,8 +63,32 @@ abstract interface class UnitRepository {
   /// The unit's tests, newest first, with the member's own score on each.
   Future<List<TestDefinition>> tests();
   Future<List<Question>> testQuestions(String testId);
-  Future<void> createTest(NewTest test);
+  /// Returns the new test's id.
+  Future<String> createTest(NewTest test);
   Future<void> deleteTest(String testId);
+
+  /// Replaces a draft's questions: [questionIds][i] goes at sheet number [numbers][i].
+  Future<void> setTestQuestions(String testId, List<int> numbers, List<String> questionIds);
+
+  /// Publishes a draft (ANO / CSUO / SUO), optionally scheduled for [scheduledFor].
+  Future<void> publishTest(String testId, {DateTime? scheduledFor, String? title});
+
+  /// Saves a question written or corrected by the unit (approved for the unit).
+  Future<Question> addUnitQuestion(Question q);
+
+  // Anonymous queries -------------------------------------------------------
+  /// Sends a query; nothing that names the asker is stored.
+  Future<void> askQuery(String token, {required String subject, required String body, required QueryCategory category, required bool toAllSeniors});
+
+  /// The asker's own queries, by their ticket codes.
+  Future<List<AnonQuery>> myQueries(List<String> tokens);
+
+  /// Seniors who may read queries: the unit's queries they can see.
+  Future<List<AnonQuery>> queryInbox();
+
+  /// A reply: with [token] it is the asker's, otherwise a senior's.
+  Future<void> replyToQuery(String queryId, String body, {String? token});
+  Future<void> setQueryStatus(String queryId, QueryStatus status, {String? token});
 
   /// Marked on the server; returns the score. A cadet can submit once.
   /// For an OMR mock, pass the uploaded sheet photo and how it was read.
@@ -97,7 +122,7 @@ abstract interface class UnitRepository {
   Future<List<AppUser>> members();
 
   /// ANO only: change a member's role or rank.
-  Future<void> updateMember(String id, {required AppRole role, String? rank});
+  Future<void> updateMember(String id, {required AppRole role, String? rank, Appointment? appointment});
 }
 
 /// Thrown with a message that is safe to show.
@@ -345,7 +370,7 @@ class SupabaseUnitRepository implements UnitRepository {
         final rows = await _client
             .from('tests')
             .select('id, title, description, duration_minutes, marks_correct, marks_wrong, opens_at, closes_at, '
-                'mode, pattern, sheet_code, started_at, upload_minutes, set_seed, '
+                'mode, pattern, sheet_code, started_at, upload_minutes, set_seed, is_draft, '
                 'test_questions(question_id, position), test_attempts(count)')
             .order('created_at', ascending: false)
             .limit(200);
@@ -368,7 +393,7 @@ class SupabaseUnitRepository implements UnitRepository {
       }, 'load the test');
 
   @override
-  Future<void> createTest(NewTest t) => _guard(() async {
+  Future<String> createTest(NewTest t) => _guard(() async {
         final row = await _client
             .from('tests')
             .insert({
@@ -386,6 +411,7 @@ class SupabaseUnitRepository implements UnitRepository {
               'sheet_code': t.sheetCode,
               'upload_minutes': t.uploadMinutes,
               'set_seed': t.setSeed,
+              'is_draft': t.draft,
             })
             .select('id')
             .single();
@@ -399,7 +425,94 @@ class SupabaseUnitRepository implements UnitRepository {
           await _client.from('tests').delete().eq('id', id);
           rethrow;
         }
+        return id;
       }, 'create the test');
+
+  @override
+  Future<void> setTestQuestions(String testId, List<int> numbers, List<String> questionIds) => _guard(() async {
+        await _client.rpc('set_test_questions', params: {'tid': testId, 'qids': questionIds, 'positions': numbers});
+      }, 'save the draft');
+
+  @override
+  Future<void> publishTest(String testId, {DateTime? scheduledFor, String? title}) => _guard(() async {
+        await _client.from('tests').update({
+          'is_draft': false,
+          'opens_at': ?scheduledFor?.toUtc().toIso8601String(),
+          'title': ?title,
+        }).eq('id', testId);
+      }, 'publish the mock');
+
+  @override
+  Future<void> askQuery(String token, {required String subject, required String body, required QueryCategory category, required bool toAllSeniors}) =>
+      _rpcGuard(() => _client.rpc('ask_query', params: {
+            'token': token,
+            'subject': subject,
+            'body': body,
+            'category': category.name,
+            'audience': toAllSeniors ? 'seniors' : 'command',
+          }), 'send your query');
+
+  @override
+  Future<List<AnonQuery>> myQueries(List<String> tokens) async {
+    if (tokens.isEmpty) return const [];
+    return _guard(() async {
+      final rows = await _client.rpc('my_queries', params: {'tokens': tokens}) as List;
+      return [for (final r in rows) anonQueryFromRow(r as Map<String, dynamic>)];
+    }, 'load your queries');
+  }
+
+  @override
+  Future<List<AnonQuery>> queryInbox() => _guard(() async {
+        final rows = await _client
+            .from('queries')
+            .select('id, subject, category, audience, status, created_at, updated_at, '
+                'query_messages(id, from_senior, senior_label, body, created_at)')
+            .order('updated_at', ascending: false)
+            .limit(200);
+        return [for (final r in rows) anonQueryFromRow(r)];
+      }, 'load the queries');
+
+  @override
+  Future<void> replyToQuery(String queryId, String body, {String? token}) =>
+      _rpcGuard(() => _client.rpc('add_query_message', params: {'qid': queryId, 'body': body, 'token': token}), 'send the reply');
+
+  @override
+  Future<void> setQueryStatus(String queryId, QueryStatus status, {String? token}) =>
+      _rpcGuard(() => _client.rpc('set_query_status', params: {'qid': queryId, 'new_status': status.name, 'token': token}),
+          'update the query');
+
+  /// RPCs raise messages written for people (limits, closed queries): pass them on.
+  Future<void> _rpcGuard(Future<dynamic> Function() run, String doing) async {
+    try {
+      await run();
+    } on PostgrestException catch (e) {
+      const known = ['You can send up to', 'This query is closed', 'Give your query', 'Write a little more', 'Write a reply', 'Join your unit'];
+      if (known.any(e.message.startsWith)) throw UnitDataFailure(e.message);
+      throw UnitDataFailure("Couldn't $doing. Check your connection and try again.");
+    } catch (e) {
+      if (e is UnitDataFailure) rethrow;
+      throw UnitDataFailure("Couldn't $doing. Check your connection and try again.");
+    }
+  }
+
+  @override
+  Future<Question> addUnitQuestion(Question q) => _guard(() async {
+        final row = await _client
+            .from('questions')
+            .insert({
+              'unit_id': _unitId,
+              'subject': q.subject,
+              'wing': _user.wing?.name,
+              'prompt': q.prompt,
+              'options': q.options,
+              'correct_index': q.correctIndex,
+              'explanation': q.explanation,
+              'status': 'approved',
+            })
+            .select('id, subject, prompt, options, correct_index, explanation')
+            .single();
+        return questionFromRow(row);
+      }, 'save the question');
 
   @override
   Future<void> deleteTest(String testId) => _guard(() async {
@@ -512,21 +625,21 @@ class SupabaseUnitRepository implements UnitRepository {
   Future<List<AppUser>> members() => _guard(() async {
         final rows = await _client
             .from('profiles')
-            .select('id, full_name, role, rank, regimental_no, wing, division, training_year, unit_id')
+            .select('id, full_name, role, rank, appointment, regimental_no, wing, division, training_year, unit_id')
             .eq('unit_id', _unitId)
             .order('full_name');
         return [for (final r in rows) appUserFromRow(r)];
       }, 'load the roster');
 
   @override
-  Future<void> updateMember(String id, {required AppRole role, String? rank}) => _guard(() async {
+  Future<void> updateMember(String id, {required AppRole role, String? rank, Appointment? appointment}) => _guard(() async {
         final rows = await _client
             .from('profiles')
-            .update({'role': roleToDb(role), 'rank': rank})
+            .update({'role': roleToDb(role), 'rank': rank, 'appointment': role == AppRole.seniorCadet ? appointment?.name : null})
             .eq('id', id)
             .select('id');
         // Row-level security turns a forbidden update into "no rows changed".
-        if (rows.isEmpty) throw const UnitDataFailure('Only the ANO can change roles and ranks.');
+        if (rows.isEmpty) throw const UnitDataFailure('Only the ANO, CSUO or SUO can change roles and appointments.');
       }, 'update the cadet');
 
   @override
@@ -688,6 +801,7 @@ TestDefinition testFromRow(Map<String, dynamic> r, {double? myScore}) {
   return TestDefinition(
     id: r['id'] as String,
     title: r['title'] as String,
+    isDraft: r['is_draft'] == true,
     mode: r['mode'] == 'omr' ? TestMode.omr : TestMode.app,
     pattern: r['pattern'] as String?,
     sheetCode: (r['sheet_code'] as num?)?.toInt(),

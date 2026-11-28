@@ -9,6 +9,7 @@ import '../domain/omr/progress.dart';
 import 'auth_repository.dart';
 import 'demo/demo_data.dart';
 import 'models/comms.dart';
+import 'models/queries.dart';
 import 'models/diary.dart';
 import 'models/roster.dart';
 import 'models/test.dart';
@@ -78,6 +79,9 @@ class AuthController extends Notifier<AppUser?> {
       try {
         await ref.read(precisPackStoreProvider).clear();
       } catch (_) {}
+      // So does the list of anonymous query tickets: someone else signing in
+      // on this phone must not be able to read them.
+      await ref.read(queryTicketsProvider.notifier).clear();
     }
   }
 }
@@ -295,13 +299,15 @@ class TestsController extends LiveListController<TestDefinition> {
   @override
   Future<List<TestDefinition>> fetch(UnitRepository repo) => repo.tests();
 
-  /// Hosts a test. Throws [UnitDataFailure] with a message to show.
-  Future<void> create(NewTest t) async {
+  /// Hosts a test and returns its id. Throws [UnitDataFailure] with a message to show.
+  Future<String> create(NewTest t) async {
     final live = repo;
     if (live == null) {
+      final id = 't${DateTime.now().microsecondsSinceEpoch}';
       state = [
         TestDefinition(
-          id: 't${DateTime.now().microsecondsSinceEpoch}',
+          id: id,
+          isDraft: t.draft,
           title: t.title,
           description: t.description,
           durationMinutes: t.durationMinutes,
@@ -318,10 +324,29 @@ class TestsController extends LiveListController<TestDefinition> {
         ),
         ...state,
       ];
-      return;
+      return id;
     }
-    await live.createTest(t);
+    final id = await live.createTest(t);
     await reload(live);
+    return id;
+  }
+
+  /// Saves a draft's questions (sheet number -> question id).
+  Future<void> setQuestions(String id, Map<int, String> byNumber) async {
+    final entries = byNumber.entries.toList()..sort((a, b) => a.key.compareTo(b.key));
+    final numbers = [for (final e in entries) e.key];
+    final qids = [for (final e in entries) e.value];
+    await repo?.setTestQuestions(id, numbers, qids);
+    state = [for (final t in state) t.id == id ? t.copyWith(questionIds: qids, numbers: numbers) : t];
+  }
+
+  /// Publishes a draft so cadets see it.
+  Future<void> publish(String id, {DateTime? scheduledFor, String? title}) async {
+    await repo?.publishTest(id, scheduledFor: scheduledFor, title: title);
+    state = [
+      for (final t in state)
+        t.id == id ? t.copyWith(isDraft: false, opensAt: scheduledFor, title: title) : t,
+    ];
   }
 
   Future<void> delete(String id) async {
@@ -380,11 +405,12 @@ class MembersController extends LiveListController<AppUser> {
   @override
   Future<List<AppUser>> fetch(UnitRepository repo) => repo.members();
 
-  /// ANO only. Sample mode changes the local list.
-  Future<void> updateMember(AppUser m, {required AppRole role, String? rank}) async {
-    await repo?.updateMember(m.id, role: role, rank: rank);
+  /// ANO, CSUO or SUO. Sample mode changes the local list.
+  Future<void> updateMember(AppUser m, {required AppRole role, String? rank, Appointment? appointment}) async {
+    final appt = role == AppRole.seniorCadet ? appointment : null;
+    await repo?.updateMember(m.id, role: role, rank: rank, appointment: appt);
     state = [
-      for (final u in state) u.id == m.id ? u.copyWith(role: role, rank: () => rank) : u,
+      for (final u in state) u.id == m.id ? u.copyWith(role: role, rank: () => rank, appointment: () => appt) : u,
     ];
   }
 }
@@ -662,3 +688,44 @@ class FigureUrlsController extends Notifier<Map<String, String>> {
     }
   }
 }
+
+
+// ---------------------------------------------------------------------------
+// Anonymous queries
+// ---------------------------------------------------------------------------
+const _ticketsKey = 'anon_query_tickets';
+
+/// The private ticket codes of queries asked from this phone.
+final queryTicketsProvider = NotifierProvider<QueryTicketsController, List<String>>(QueryTicketsController.new);
+
+class QueryTicketsController extends Notifier<List<String>> {
+  @override
+  List<String> build() => ref.read(sharedPreferencesProvider)?.getStringList(_ticketsKey) ?? const [];
+
+  Future<void> add(String code) async {
+    if (state.contains(code)) return;
+    state = [code, ...state];
+    await ref.read(sharedPreferencesProvider)?.setStringList(_ticketsKey, state);
+  }
+
+  Future<void> clear() async {
+    state = const [];
+    await ref.read(sharedPreferencesProvider)?.remove(_ticketsKey);
+  }
+}
+
+/// The member's own queries (found by the tickets on this phone).
+final myQueriesProvider = FutureProvider.autoDispose<List<AnonQuery>>((ref) async {
+  final repo = ref.watch(unitRepositoryProvider);
+  final tickets = ref.watch(queryTicketsProvider);
+  if (repo == null) return const [];
+  return repo.myQueries(tickets);
+});
+
+/// CSUO / SUO (and JUO / CSM / CQMS for queries opened to them).
+final queryInboxProvider = FutureProvider.autoDispose<List<AnonQuery>>((ref) async {
+  final repo = ref.watch(unitRepositoryProvider);
+  final me = ref.watch(authControllerProvider);
+  if (repo == null || me == null || !me.canHandleQueries(toAllSeniors: true)) return const [];
+  return repo.queryInbox();
+});

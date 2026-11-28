@@ -36,20 +36,24 @@ class _FigureStripState extends ConsumerState<FigureStrip> {
   @override
   Widget build(BuildContext context) {
     final urls = ref.watch(figureUrlsProvider);
+    // Only pictures that are actually on the unit's storage: no empty boxes
+    // while the ANO hasn't uploaded them.
+    final shown = [for (final f in widget.figures) if (urls[f.path] != null) f];
+    if (shown.isEmpty) return const SizedBox.shrink();
     return SizedBox(
       height: widget.height,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        itemCount: widget.figures.length,
+        itemCount: shown.length,
         separatorBuilder: (_, _) => const SizedBox(width: Space.sm),
         itemBuilder: (context, i) {
-          final f = widget.figures[i];
+          final f = shown[i];
           return Semantics(
             button: true,
             label: 'Figure from ${f.chapterCode}, page ${f.page ?? ''}',
             child: GestureDetector(
               onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
-                builder: (_) => FigureViewer(figures: widget.figures, initial: i),
+                builder: (_) => FigureViewer(figures: shown, initial: i),
                 fullscreenDialog: true,
               )),
               child: AspectRatio(

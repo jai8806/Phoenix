@@ -29,11 +29,34 @@ String? chapterPrefix(String label) {
 }
 
 class PatternPaper {
-  const PatternPaper(this.title, this.sections);
-  final String title; // "PAPER - II : WEAPON TRAINING"
+  const PatternPaper(this.title, this.sections, {this.special = false});
+  final String title; // "PAPER II – WEAPON TRAINING"
   final List<PatternSection> sections;
+
+  /// The wing's specialised subjects (the rest are common subjects).
+  final bool special;
   int get count => sections.fold(0, (a, s) => a + s.count);
+
+  /// "Weapon Training", "Misc", "Army Special Subject".
+  String get shortTitle {
+    final t = title.replaceFirst(RegExp(r'^PAPER\s+[IVX]+\s*[–:-]\s*'), '');
+    return t.split(' ').map((w) => w.length <= 1 || w.startsWith('(') ? w : w[0] + w.substring(1).toLowerCase()).join(' ');
+  }
 }
+
+/// "NCC GENERAL (3x2 = 06)", as printed on the real paper.
+String sectionHeading(PatternSection s, double marksEach) {
+  final m = (s.count * marksEach).round();
+  return '${s.subject.toUpperCase()} (${s.count.toString().padLeft(2, '0')}x${fmtNum(marksEach)} = ${m.toString().padLeft(2, '0')})';
+}
+
+/// "(15X2 = 30 MARKS)" or "(210 MARKS)".
+String paperMarksLine(PatternPaper p, double marksEach) {
+  final m = (p.count * marksEach).round();
+  return p.sections.length == 1 ? '(${p.count}X${fmtNum(marksEach)} = $m MARKS)' : '($m MARKS)';
+}
+
+String fmtNum(double v) => v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toString();
 
 /// The shape of a real certificate paper.
 class ExamPattern {
@@ -45,7 +68,31 @@ class ExamPattern {
     this.durationMinutes = 180,
     this.marking = const MarkingScheme(correct: 2, wrong: 0.5),
     this.passPercent = 33,
+    this.examTitle = '',
+    this.directorate = 'NCC DIRECTORATE KARNATAKA & GOA',
+    this.candidates = 'ARMY SD/SW CADETS',
+    this.basedOn = '',
   });
+
+  /// Printed as on the real paper, e.g. "'B' CERTIFICATE EXAMINATION".
+  final String examTitle;
+  final String directorate;
+  final String candidates;
+
+  /// Which real paper this copies.
+  final String basedOn;
+
+  double get commonMarks => papers.where((p) => !p.special).fold(0, (a, p) => a + p.count * marking.correct);
+  double get specialMarks => papers.where((p) => p.special).fold(0, (a, p) => a + p.count * marking.correct);
+
+  /// The general instructions printed on the paper.
+  List<String> get instructions => [
+        'There are total of $questionCount MCQs each question carries ${fmtNum(marking.correct)} Marks.',
+        if (marking.wrong > 0) '${fmtNum(marking.wrong)} mark will be deducted for each wrong answer.',
+        'Choose only one answer.',
+        'Any MCQ having more than one answer will be treated as wrong.',
+        'Mark the answers in OMR sheet provided to you in Black Ball pen.',
+      ];
 
   final String id; // 'bcert' | 'ccert'
   final String name;
@@ -90,16 +137,19 @@ class ExamPattern {
 
 
 
-/// B Certificate, Karnataka & Goa Directorate, as in the 2026 papers (Sets 1 and 2).
+/// B Certificate, Karnataka & Goa Directorate, exactly as the 2026 papers
+/// (Sets 1 and 2): 175 MCQs, 350 marks, 3 hours, 33% in each paper.
 const bCertPattern = ExamPattern(
   id: 'bcert',
   name: 'B Certificate',
   heading: "'B' CERTIFICATE MOCK EXAMINATION",
+  examTitle: "'B' CERTIFICATE EXAMINATION",
+  basedOn: 'B Cert 2026 · Kar & Goa Dte · Army SD/SW (Sets 1 & 2)',
   papers: [
-    PatternPaper('PAPER - II : WEAPON TRAINING', [
+    PatternPaper('PAPER II – WEAPON TRAINING', [
       PatternSection('Weapon Training', 15, labels: ['Weapon Training'], codes: ['WT']),
     ]),
-    PatternPaper('PAPER - III : MISCELLANEOUS', [
+    PatternPaper('PAPER III – MISC', [
       PatternSection('NCC General', 3, labels: ['NCC General'], codes: ['N', 'NCC']),
       PatternSection('National Integration & Awareness', 10, labels: ['National Integration', 'NCC Integration and Awareness'], codes: ['NI']),
       PatternSection('Personality Development', 30, labels: ['Personality Development'], codes: ['PDLS']),
@@ -112,7 +162,7 @@ const bCertPattern = ExamPattern(
       PatternSection('Obstacle Training', 3, labels: ['Obstacle Training'], codes: ['OT']),
       PatternSection('Border & Coastal Areas', 4, labels: ['Border And Coastal Areas'], codes: ['BCA']),
     ]),
-    PatternPaper('PAPER - IV : SPECIALISED SUBJECTS', [
+    PatternPaper('ARMY SPECIAL SUBJECT', special: true, [
       PatternSection('Armed Forces', 10, labels: ['Armed Forces'], codes: ['AF']),
       PatternSection('Map Reading', 12, labels: ['Map Reading (MR)', 'Map Reading'], codes: ['MR']),
       PatternSection('Field Craft & Battle Craft', 12,
@@ -126,34 +176,39 @@ const bCertPattern = ExamPattern(
   ],
 );
 
-/// C Certificate, by the subject weights of the 2024-25 paper.
+/// C Certificate, exactly as the 2024-25 paper (Army SD/SW): 175 MCQs,
+/// 350 marks, 3 hours. Weapon Training Q1-5, Misc Q6-120, Special Q121-175.
 const cCertPattern = ExamPattern(
   id: 'ccert',
   name: 'C Certificate',
   heading: "'C' CERTIFICATE MOCK EXAMINATION",
+  examTitle: "'C' CERTIFICATE EXAMINATION",
+  basedOn: 'C Cert 2024-25 · Army SD/SW',
   papers: [
-    PatternPaper('PAPER - I : COMMON SUBJECTS', [
+    PatternPaper('PAPER II – WEAPON TRAINING', [
       PatternSection('Weapon Training', 5, labels: ['Weapon Training'], codes: ['WT']),
+    ]),
+    PatternPaper('PAPER III – MISC', [
+      PatternSection('National Integration & Awareness', 5, labels: ['National Integration', 'NCC Integration and Awareness'], codes: ['NI']),
       PatternSection('Personality Development', 35, labels: ['Personality Development'], codes: ['PDLS']),
+      PatternSection('Leadership', 10, labels: ['Leadership'], codes: ['L', 'ME']),
+      PatternSection('Disaster Management', 11, labels: ['Disaster Management'], codes: ['DM']),
       PatternSection('Social Service & Community Development', 18,
           labels: ['Social Service & Community Development (SSCD)', 'PMJAY'], codes: ['SA', 'SSCD']),
       PatternSection('Health & Hygiene', 14, labels: ['Health and Hygiene'], codes: ['H', 'PMW']),
-      PatternSection('Disaster Management', 11, labels: ['Disaster Management'], codes: ['DM']),
-      PatternSection('Leadership', 10, labels: ['Leadership'], codes: ['L', 'ME']),
       PatternSection('Environment Awareness', 10, labels: ['Environmental Awareness And Conservation'], codes: ['E', 'EA']),
       PatternSection('Obstacle Training', 7, labels: ['Obstacle Training'], codes: ['OT']),
-      PatternSection('National Integration & Awareness', 5, labels: ['National Integration', 'NCC Integration and Awareness'], codes: ['NI']),
       PatternSection('Border & Coastal Areas', 5, labels: ['Border And Coastal Areas'], codes: ['BCA']),
     ]),
-    PatternPaper('PAPER - II : SPECIALISED SUBJECTS', [
+    PatternPaper('PAPER IV – SPECIALISED SUBJECT (ARMY)', special: true, [
+      PatternSection('Armed Forces', 5, labels: ['Armed Forces'], codes: ['AF']),
+      PatternSection('Map Reading', 15, labels: ['Map Reading (MR)', 'Map Reading'], codes: ['MR']),
       PatternSection('Field Craft & Battle Craft', 16,
           labels: ['Field Craft And Battle Craft (Fc & Bc)', 'Field Craft & Battle Craft (Fc & Bc)', 'Field Craft & Battle Craft'],
           codes: ['FCBC', 'FC/BC']),
-      PatternSection('Map Reading', 15, labels: ['Map Reading (MR)', 'Map Reading'], codes: ['MR']),
-      PatternSection('Military History', 10, labels: ['Military History (MH)', 'Military History'], codes: ['MH']),
       PatternSection('Infantry Weapons & Equipment', 6,
           labels: ['Introduction To Infantry Weapons And Equipment', 'Infantry Weapons & Equipment'], codes: ['INF', 'MWE']),
-      PatternSection('Armed Forces', 5, labels: ['Armed Forces'], codes: ['AF']),
+      PatternSection('Military History', 10, labels: ['Military History (MH)', 'Military History'], codes: ['MH']),
       PatternSection('Communication', 3, labels: ['Communication'], codes: ['C', 'MC']),
     ]),
   ],

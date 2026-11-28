@@ -13,6 +13,23 @@ enum AppRole {
   bool get isAno => this == AppRole.ano;
 }
 
+/// Cadet appointments. CSUO and SUO command the unit with the ANO; JUO,
+/// CSM and CQMS assist them.
+enum Appointment {
+  csuo('CSUO', 'Company Senior Under Officer'),
+  suo('SUO', 'Senior Under Officer'),
+  juo('JUO', 'Junior Under Officer'),
+  csm('CSM', 'Company Sergeant Major'),
+  cqms('CQMS', 'Company Quarter Master Sergeant');
+
+  const Appointment(this.label, this.fullName);
+  final String label;
+  final String fullName;
+
+  /// Full authority with the ANO: roster, publishing mocks, anonymous queries.
+  bool get isCommand => this == Appointment.csuo || this == Appointment.suo;
+}
+
 enum Wing {
   army('Army'),
   navy('Navy'),
@@ -48,9 +65,13 @@ class AppUser {
     this.unitName,
     this.unitId,
     this.isSample = false,
+    this.appointment,
   });
 
   final String id;
+
+  /// Only senior cadets hold one.
+  final Appointment? appointment;
   final String fullName;
   final AppRole role;
   final String? rank;
@@ -71,6 +92,17 @@ class AppUser {
   /// New accounts have no unit until they join with the code their ANO shares.
   bool get hasUnit => unitName != null;
 
+  /// ANO, CSUO or SUO: manages the roster and publishes mocks.
+  bool get isCommand => role.isAno || (role == AppRole.seniorCadet && (appointment?.isCommand ?? false));
+
+  /// Can read anonymous queries. [toAllSeniors]: the asker let JUO, CSM and
+  /// CQMS see it too. Never the ANO.
+  bool canHandleQueries({bool toAllSeniors = false}) =>
+      role == AppRole.seniorCadet && appointment != null && (appointment!.isCommand || toAllSeniors);
+
+  /// "CSUO" / "ANO" / "Senior cadet" / "Cadet".
+  String get position => role.isAno ? 'ANO' : appointment?.label ?? role.label;
+
   /// A copy with the fields a member edits on their own profile, or an ANO
   /// edits for them. Pass the current value to keep it.
   AppUser copyWith({
@@ -81,6 +113,7 @@ class AppUser {
     Wing? Function()? wing,
     Division? Function()? division,
     int? Function()? trainingYear,
+    Appointment? Function()? appointment,
   }) =>
       AppUser(
         id: id,
@@ -94,11 +127,12 @@ class AppUser {
         unitName: unitName,
         unitId: unitId,
         isSample: isSample,
+        appointment: appointment == null ? this.appointment : appointment(),
       );
 }
 
 /// Ranks cadets hold, lowest first, for pickers.
-const cadetRanks = ['CDT', 'LCPL', 'CPL', 'SGT', 'CQMS', 'CSM', 'JUO', 'SUO'];
+const cadetRanks = ['CDT', 'LCPL', 'CPL', 'SGT', 'CQMS', 'CSM', 'JUO', 'SUO', 'CSUO'];
 
 /// Database names for roles.
 String roleToDb(AppRole r) => switch (r) {
@@ -133,6 +167,7 @@ AppUser appUserFromRow(Map<String, dynamic> row) => AppUser(
       trainingYear: (row['training_year'] as num?)?.toInt(),
       unitName: (row['units'] as Map<String, dynamic>?)?['name'] as String?,
       unitId: row['unit_id'] as String?,
+      appointment: enumByName(Appointment.values, row['appointment'] as String?),
     );
 
 /// The editable profile fields as a `profiles` update.

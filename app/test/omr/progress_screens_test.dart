@@ -69,7 +69,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('3 attempts by 2 cadets'), findsOneWidget);
     expect(find.text('Arjun Rao'), findsWidgets); // failing Paper IV in the latest mock
-    expect(find.textContaining('SPECIALISED SUBJECTS'), findsOneWidget);
+    expect(find.textContaining('Army Special Subject'), findsOneWidget);
     expect(find.text('CADET BY SUBJECT'), findsOneWidget);
   });
 }

@@ -13,6 +13,7 @@ import '../../data/models/test.dart';
 import '../../data/models/user.dart';
 import '../../data/providers.dart';
 import '../../data/syllabus/syllabus.dart';
+import '../shared/visual_notes.dart';
 import '../shared/widgets.dart';
 import 'study_screens.dart';
 
@@ -33,7 +34,8 @@ class _LearnScreenState extends ConsumerState<LearnScreen> {
     final level = _level ?? SyllabusLevel.of(user?.division);
     final wing = user?.wing ?? Wing.army;
     final now = ref.watch(clockProvider)();
-    final tests = ref.watch(testsProvider);
+    // Drafts never reach cadets (the server hides them); belt and braces.
+    final tests = ref.watch(testsProvider).where((t) => !t.isDraft).toList();
     final track = ref.watch(certTrackProvider);
     final insights = insightsFor(track);
     final plan = ref.watch(studyPlanProvider);
@@ -106,6 +108,19 @@ class _LearnScreenState extends ConsumerState<LearnScreen> {
             onTap: () => showRevisionTips(context),
           ),
         ]),
+        SectionHeader('Picture notes · ${visualNotes.length}'),
+        SizedBox(
+          height: 210,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: visualNotes.length,
+            separatorBuilder: (_, _) => const SizedBox(width: Space.sm),
+            itemBuilder: (_, i) => VisualNoteThumb(visualNotes[i]),
+          ),
+        ),
+        const SizedBox(height: Space.xs),
+        Text('Ranks, the three norths, grid references, formations, GRIT, knots, CPR… Tap one to study it full-screen.',
+            style: t.bodySmall?.copyWith(color: c.onSurfaceVariant)),
         const SectionHeader('Practice'),
         ListCard(children: [
           ListTile(

@@ -73,9 +73,13 @@ class TestDefinition {
     this.uploadMinutes = 20,
     this.setSeed = 0,
     this.numbers = const [],
+    this.isDraft = false,
   });
 
   final String id;
+
+  /// Generated but not yet checked and published: only admins see it.
+  final bool isDraft;
   final String title;
   final int durationMinutes;
   final MarkingScheme marking;
@@ -123,13 +127,24 @@ class TestDefinition {
 
   TestDefinition withMyScore(double score) => copyWith(myScore: score, attemptCount: attemptCount + 1);
 
-  TestDefinition copyWith({double? myScore, int? attemptCount, DateTime? startedAt, DateTime? opensAt, DateTime? closesAt}) =>
+  TestDefinition copyWith({
+    double? myScore,
+    int? attemptCount,
+    DateTime? startedAt,
+    DateTime? opensAt,
+    DateTime? closesAt,
+    bool? isDraft,
+    List<String>? questionIds,
+    List<int>? numbers,
+    String? title,
+  }) =>
       TestDefinition(
         id: id,
-        title: title,
+        title: title ?? this.title,
+        isDraft: isDraft ?? this.isDraft,
         durationMinutes: durationMinutes,
         marking: marking,
-        questionIds: questionIds,
+        questionIds: questionIds ?? this.questionIds,
         opensAt: opensAt ?? this.opensAt,
         closesAt: closesAt ?? this.closesAt,
         description: description,
@@ -141,7 +156,7 @@ class TestDefinition {
         startedAt: startedAt ?? this.startedAt,
         uploadMinutes: uploadMinutes,
         setSeed: setSeed,
-        numbers: numbers,
+        numbers: numbers ?? this.numbers,
       );
 }
 
@@ -163,8 +178,11 @@ class NewTest {
     this.uploadMinutes = 20,
     this.setSeed = 0,
     this.numbers,
+    this.draft = false,
   });
 
+  /// Save as a draft for checking before cadets see it.
+  final bool draft;
   final TestMode mode;
   final String? pattern;
   final int? sheetCode;

@@ -8,6 +8,7 @@ import 'package:phoenix/core/router/app_router.dart';
 import 'package:phoenix/data/auth_repository.dart';
 import 'package:phoenix/data/models/comms.dart';
 import 'package:phoenix/data/models/diary.dart';
+import 'package:phoenix/data/models/queries.dart';
 import 'package:phoenix/data/models/figure.dart';
 import 'package:phoenix/data/models/test.dart';
 import 'package:phoenix/data/models/user.dart';
@@ -16,6 +17,7 @@ import 'package:phoenix/data/providers.dart';
 import 'package:phoenix/data/unit_repository.dart';
 import 'package:phoenix/data/precis_pack.dart';
 import 'package:phoenix/domain/precis_search.dart';
+import 'package:phoenix/domain/omr/exam_pattern.dart';
 import 'package:phoenix/domain/omr/progress.dart';
 import 'package:phoenix/features/cadet/diary_entry_screen.dart';
 import 'package:phoenix/features/cadet/edit_profile_screen.dart';
@@ -62,7 +64,9 @@ class FakeUnitRepo implements UnitRepository {
   @override
   Future<Map<String, String>> figureUrls(List<String> paths) async {
     urlRequests.addAll(paths);
-    return const {}; // no network in tests: placeholders are shown
+    // Links as if the files are uploaded (tests have no network, so the images
+    // themselves show their placeholder).
+    return {for (final p in paths) p: 'https://figures.invalid/$p'};
   }
 
   @override
@@ -159,11 +163,83 @@ class FakeUnitRepo implements UnitRepository {
   Future<List<Question>> testQuestions(String testId) async => testQs[testId] ?? const [];
 
   @override
-  Future<void> createTest(NewTest t) async {
+  Future<String> createTest(NewTest t) async {
     final id = 'h${testsList.length + 1}';
     testsList.insert(0, TestDefinition(id: id, title: t.title, durationMinutes: t.durationMinutes, marking: t.marking,
-        questionIds: t.questionIds, opensAt: t.opensAt, closesAt: t.closesAt));
+        questionIds: t.questionIds, opensAt: t.opensAt, closesAt: t.closesAt, isDraft: t.draft, mode: t.mode,
+        pattern: t.pattern, sheetCode: t.sheetCode, setSeed: t.setSeed, uploadMinutes: t.uploadMinutes,
+        numbers: t.numbers ?? const []));
     testQs[id] = [for (final qid in t.questionIds) bank.firstWhere((q) => q.id == qid)];
+    return id;
+  }
+
+  final published = <(String, DateTime?)>[];
+
+  // Anonymous queries: stored by ticket, never by person (like the server).
+  final queriesByTicket = <String, AnonQuery>{};
+  final queryLog = <String>[];
+
+  @override
+  Future<void> askQuery(String token, {required String subject, required String body, required QueryCategory category, required bool toAllSeniors}) async {
+    queriesByTicket[token] = AnonQuery(id: 'q${queriesByTicket.length + 1}', subject: subject, category: category,
+        status: QueryStatus.open, createdAt: now, updatedAt: now, toAllSeniors: toAllSeniors,
+        messages: [QueryMessage(id: 'm0', fromSenior: false, body: body, createdAt: now)]);
+  }
+
+  @override
+  Future<List<AnonQuery>> myQueries(List<String> tokens) async => [
+        for (final t in tokens)
+          if (queriesByTicket[t] != null) _withToken(queriesByTicket[t]!, t),
+      ];
+
+  AnonQuery _withToken(AnonQuery q, String? t) => AnonQuery(id: q.id, subject: q.subject, category: q.category,
+      status: q.status, createdAt: q.createdAt, updatedAt: q.updatedAt, messages: q.messages, toAllSeniors: q.toAllSeniors, token: t);
+
+  @override
+  Future<List<AnonQuery>> queryInbox() async => [for (final q in queriesByTicket.values) _withToken(q, null)];
+
+  String _ticketOf(String id) => queriesByTicket.entries.firstWhere((e) => e.value.id == id).key;
+
+  @override
+  Future<void> replyToQuery(String queryId, String body, {String? token}) async {
+    final key = _ticketOf(queryId);
+    final q = queriesByTicket[key]!;
+    queryLog.add('${token == null ? 'senior' : 'asker'}: $body');
+    queriesByTicket[key] = AnonQuery(id: q.id, subject: q.subject, category: q.category,
+        status: token == null && q.status == QueryStatus.open ? QueryStatus.answered : q.status,
+        createdAt: q.createdAt, updatedAt: now, toAllSeniors: q.toAllSeniors,
+        messages: [...q.messages, QueryMessage(id: 'm${q.messages.length}', fromSenior: token == null,
+            seniorLabel: token == null ? 'CSUO' : null, body: body, createdAt: now)]);
+  }
+
+  @override
+  Future<void> setQueryStatus(String queryId, QueryStatus status, {String? token}) async {
+    final key = _ticketOf(queryId);
+    final q = queriesByTicket[key]!;
+    queriesByTicket[key] = AnonQuery(id: q.id, subject: q.subject, category: q.category, status: status,
+        createdAt: q.createdAt, updatedAt: now, toAllSeniors: q.toAllSeniors, messages: q.messages);
+  }
+
+  @override
+  Future<void> setTestQuestions(String testId, List<int> numbers, List<String> questionIds) async {
+    final i = testsList.indexWhere((t) => t.id == testId);
+    testsList[i] = testsList[i].copyWith(questionIds: questionIds, numbers: numbers);
+    testQs[testId] = [for (final qid in questionIds) bank.firstWhere((q) => q.id == qid)];
+  }
+
+  @override
+  Future<void> publishTest(String testId, {DateTime? scheduledFor, String? title}) async {
+    published.add((testId, scheduledFor));
+    final i = testsList.indexWhere((t) => t.id == testId);
+    testsList[i] = testsList[i].copyWith(isDraft: false, opensAt: scheduledFor, title: title);
+  }
+
+  @override
+  Future<Question> addUnitQuestion(Question q) async {
+    final saved = Question(id: 'u${bank.length + 1}', subject: q.subject, prompt: q.prompt, options: q.options,
+        correctIndex: q.correctIndex, explanation: q.explanation);
+    bank.add(saved);
+    return saved;
   }
 
   @override
@@ -233,8 +309,12 @@ class FakeUnitRepo implements UnitRepository {
   Future<List<AppUser>> members() async => List.of(membersList);
 
   @override
-  Future<void> updateMember(String id, {required AppRole role, String? rank}) async =>
-      memberUpdates.add((id, role, rank));
+  Future<void> updateMember(String id, {required AppRole role, String? rank, Appointment? appointment}) async {
+    memberUpdates.add((id, role, rank));
+    lastAppointment = appointment;
+  }
+
+  Appointment? lastAppointment;
 
   @override
   Future<UstaadReply> askUstaad(String question,
@@ -602,18 +682,21 @@ void main() {
     expect(find.text('0% right'), findsOneWidget); // the Leadership question
   });
 
-  testWidgets('ANO promotes a cadet to senior cadet from the roster', (tester) async {
+  testWidgets('ANO makes a cadet JUO from the roster; the rank follows', (tester) async {
     final (c, repo) = await pumpLive(tester, ano, size: const Size(1280, 1000));
     c.read(routerProvider).go(Routes.cadets);
     await tester.pumpAndSettle();
     expect(find.text('Sample roster'), findsNothing);
     await tester.tap(find.text('Meera Nair'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('JUO'));
-    await tester.tap(find.text('Senior cadet'));
+    expect(find.text('Appointment'), findsOneWidget);
+    await tester.tap(find.widgetWithText(ChoiceChip, 'JUO').last); // the appointment, not the rank
+    await tester.pump();
+    expect(find.textContaining('assists the CSUO / SUO'), findsOneWidget);
     await tester.tap(find.text('Save changes'));
     await tester.pumpAndSettle();
     expect(repo.memberUpdates.single, ('u1', AppRole.seniorCadet, 'JUO'));
+    expect(repo.lastAppointment, Appointment.juo);
     expect(find.text('JUO Meera Nair'), findsOneWidget);
   });
 
@@ -665,6 +748,8 @@ void main() {
     expect(find.textContaining('responsibility for national defence', findRichText: true), findsNothing);
     expect(find.bySemanticsLabel('Figure from AF I, page 4'), findsOneWidget); // inline, in its section
     expect(find.text('IN 30 SECONDS'), findsOneWidget);
+    expect(find.text('Equivalent officer ranks'), findsOneWidget); // AF I's picture note
+    await tester.scrollUntilVisible(find.text('Mark as studied'), 400, scrollable: find.byType(Scrollable).first);
     expect(find.text('Mark as studied'), findsOneWidget);
   });
 
@@ -776,6 +861,185 @@ void main() {
     await tester.pumpAndSettle();
     expect(repo.responsesList.firstWhere((r) => r.cadetId == 'u1').attended, isTrue);
     expect(find.text('Present on the day'), findsOneWidget);
+  });
+
+  testWidgets('a CSUO manages the roster too; a JUO cannot', (tester) async {
+    const csuo = AppUser(id: 'u5', fullName: 'Rohan Das', role: AppRole.seniorCadet, appointment: Appointment.csuo,
+        unitName: 'Test Unit', unitId: 'unit-1');
+    const juo = AppUser(id: 'u6', fullName: 'Isha Rao', role: AppRole.seniorCadet, appointment: Appointment.juo,
+        unitName: 'Test Unit', unitId: 'unit-1');
+    expect(csuo.isCommand, isTrue);
+    expect(juo.isCommand, isFalse);
+    expect(ano.isCommand, isTrue);
+    expect(ano.canHandleQueries(toAllSeniors: true), isFalse); // never the ANO
+    expect(juo.canHandleQueries(), isFalse);
+    expect(juo.canHandleQueries(toAllSeniors: true), isTrue);
+
+    final (c, _) = await pumpLive(tester, csuo, size: const Size(1280, 1000));
+    c.read(routerProvider).go(Routes.cadets);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('tap someone to change'), findsOneWidget);
+    await tester.tap(find.text('Meera Nair'));
+    await tester.pumpAndSettle();
+    expect(find.text('Save changes'), findsOneWidget);
+  });
+
+  testWidgets('OMR mock: generate a draft like the real paper, fix questions, then schedule and publish', (tester) async {
+    final repo = FakeUnitRepo()
+      ..bank.addAll([
+        for (var i = 0; i < 18; i++)
+          Question(id: 'w$i', subject: 'Weapon Training', prompt: 'Weapon question $i?',
+              options: const ['Alpha', 'Bravo', 'Charlie', 'Delta'], correctIndex: 1),
+      ]);
+    final (c, _) = await pumpLive(tester, ano, repo: repo, size: const Size(1280, 1200));
+    c.read(routerProvider).go(Routes.tests);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('New test'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Test name'), 'B Cert mock 1');
+    expect(find.textContaining('B Cert 2026'), findsOneWidget);
+    await tester.tap(find.text('Generate draft'));
+    await tester.pumpAndSettle();
+
+    // A draft, laid out like the real paper
+    final draft = repo.testsList.single;
+    expect(draft.isDraft, isTrue);
+    expect(draft.questionIds, hasLength(15)); // Weapon Training only: the bank has nothing else
+    expect(find.textContaining("cadets can't see this yet"), findsOneWidget);
+    expect(find.text('NCC DIRECTORATE KARNATAKA & GOA'), findsOneWidget);
+    expect(find.text('PAPER II – WEAPON TRAINING'), findsOneWidget);
+    expect(find.text('(15X2 = 30 MARKS)'), findsOneWidget);
+    expect(find.textContaining('160 empty'), findsWidgets); // banner + 'Fill 160 empty'
+
+    // Replace Q1 with one of the 3 unused questions
+    final q1 = draft.questionIds[draft.numbers.indexOf(1)];
+    await tester.tap(find.byTooltip('Change Q1'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Replace with another'));
+    await tester.pumpAndSettle();
+    final afterReplace = repo.testsList.single;
+    expect(afterReplace.questionIds[afterReplace.numbers.indexOf(1)], isNot(q1));
+
+    // Write Q16 (first question of Paper III, which is empty)
+    await tester.scrollUntilVisible(find.byTooltip('Change Q16'), 300, scrollable: find.byType(Scrollable).first);
+    await tester.tap(find.byTooltip('Change Q16'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Write a question'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Question'), 'What is the motto of the NCC?');
+    for (final (i, o) in ['Unity and Discipline', 'Service before self', 'Duty first', 'Valour'].indexed) {
+      await tester.enterText(find.widgetWithText(TextField, 'Option ${'ABCD'[i]}'), o);
+    }
+    await tester.tap(find.text('Save question'));
+    await tester.pumpAndSettle();
+    final withQ16 = repo.testsList.single;
+    expect(withQ16.numbers, contains(16));
+    expect(repo.bank.last.prompt, 'What is the motto of the NCC?');
+    expect(repo.bank.last.subject, 'NCC General');
+
+    // Schedule & publish, with a calendar entry
+    await tester.tap(find.text('Schedule & publish'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Publish'));
+    await tester.pumpAndSettle();
+    expect(repo.testsList.single.isDraft, isFalse);
+    expect(repo.published.single.$2, DateTime(2026, 11, 27, 9, 30));
+    final ev = repo.eventsList.single;
+    expect(ev.kind, EventKind.exam);
+    expect(ev.needsResponse, isTrue);
+    expect(find.textContaining('Published'), findsOneWidget);
+  });
+
+  testWidgets('a JUO can build a draft but only the CSUO / SUO / ANO publishes it', (tester) async {
+    const juo = AppUser(id: 'u6', fullName: 'Isha Rao', role: AppRole.seniorCadet, appointment: Appointment.juo,
+        unitName: 'Test Unit', unitId: 'unit-1');
+    final repo = FakeUnitRepo()..bank.addAll(wtBank(16));
+    repo.testsList.add(TestDefinition(id: 'd1', title: 'Draft mock', durationMinutes: 180, marking: bCertPattern.marking,
+        questionIds: [for (final q in repo.bank.take(15)) q.id], numbers: [for (var i = 1; i <= 15; i++) i],
+        mode: TestMode.omr, pattern: 'bcert', isDraft: true));
+    final (c, _) = await pumpLive(tester, juo, repo: repo, size: const Size(1280, 1000));
+    c.read(routerProvider).push(Routes.mockDraft('d1'));
+    await tester.pumpAndSettle();
+    expect(find.text('CSUO / SUO / ANO publishes'), findsOneWidget);
+    final button = tester.widget<FilledButton>(find.ancestor(of: find.text('CSUO / SUO / ANO publishes'), matching: find.byType(FilledButton)));
+    expect(button.onPressed, isNull);
+  });
+
+  testWidgets('anonymous query: cadet asks, CSUO replies and raises it, ANO never sees it', (tester) async {
+    final repo = FakeUnitRepo();
+    // Cadet asks
+    var (c, _) = await pumpLive(tester, cadet, repo: repo);
+    c.read(routerProvider).push(Routes.askSeniors);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('The ANO cannot see it'), findsOneWidget);
+    await tester.tap(find.text('New query'));
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    await tester.tap(find.text('Camp'));
+    await tester.enterText(find.widgetWithText(TextField, 'Title'), 'Seniors shouting at camp');
+    await tester.enterText(find.widgetWithText(TextField, 'What happened / what do you need?'), 'On day 3 some seniors made us stand for hours.');
+    await tester.ensureVisible(find.text('Send anonymously'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Send anonymously'));
+    await tester.pumpAndSettle();
+    expect(find.text('Sent anonymously'), findsOneWidget);
+    final ticket = c.read(queryTicketsProvider).single;
+    expect(ticket, hasLength(24));
+    expect(find.text(formatTicket(ticket)), findsOneWidget);
+    final asked = repo.queriesByTicket[ticket]!;
+    expect(asked.category, QueryCategory.camp);
+    expect(asked.toAllSeniors, isFalse);
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+    expect(find.text('Seniors shouting at camp'), findsOneWidget);
+
+    // CSUO answers it
+    const csuo = AppUser(id: 'u5', fullName: 'Rohan Das', role: AppRole.seniorCadet, appointment: Appointment.csuo,
+        unitName: 'Test Unit', unitId: 'unit-1');
+    await tester.pumpWidget(const SizedBox());
+    (c, _) = await pumpLive(tester, csuo, repo: repo, size: const Size(1280, 1000));
+    expect(find.text('Anonymous queries'), findsOneWidget); // overview card
+    expect(find.text('1 waiting for a reply'), findsOneWidget);
+    await tester.tap(find.text('Anonymous queries'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Seniors shouting at camp'));
+    await tester.pumpAndSettle();
+    expect(find.text('Cadet (anonymous)'), findsOneWidget);
+    await tester.enterText(find.widgetWithText(TextField, 'Reply to the cadet…'), 'We will handle it. Thank you for telling us.');
+    await tester.tap(find.byTooltip('Send'));
+    await tester.pumpAndSettle();
+    expect(repo.queryLog.single, startsWith('senior: We will handle it'));
+    await tester.tap(find.byTooltip('Status'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Mark as raised with the ANO'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Mark as raised'));
+    await tester.pumpAndSettle();
+    expect(repo.queriesByTicket[ticket]!.status, QueryStatus.escalated);
+
+    // The ANO has no card and the inbox is locked
+    await tester.pumpWidget(const SizedBox());
+    (c, _) = await pumpLive(tester, ano, repo: repo, size: const Size(1280, 1000));
+    expect(find.text('Anonymous queries'), findsNothing);
+    c.read(routerProvider).push(Routes.queryInbox);
+    await tester.pumpAndSettle();
+    expect(find.text('Seniors shouting at camp'), findsNothing);
+    expect(find.textContaining('The ANO does not see them'), findsOneWidget);
+  });
+
+  testWidgets('Learn has picture notes; a chapter shows its own diagrams', (tester) async {
+    final (c, _) = await pumpLive(tester, cadet, size: const Size(420, 2400));
+    c.read(routerProvider).go(Routes.learn);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('PICTURE NOTES'), findsOneWidget);
+    c.read(routerProvider).push(Routes.chapter('MR III'));
+    await tester.pumpAndSettle();
+    expect(find.text('The three norths'), findsOneWidget);
+    expect(find.text('Section formations'), findsNothing); // FCBC VII's picture, not this chapter's
+    await tester.tap(find.text('The three norths'));
+    await tester.pumpAndSettle();
+    expect(find.text('Pinch to zoom.'), findsOneWidget);
   });
 
   group('row mapping', () {

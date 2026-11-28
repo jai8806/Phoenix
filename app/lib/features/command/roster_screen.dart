@@ -50,7 +50,7 @@ class _RosterScreenState extends ConsumerState<RosterScreen> {
         Expanded(
           child: Text(
             '${members.length} member${members.length == 1 ? '' : 's'}'
-            '${me?.role.isAno == true ? ' · tap someone to change their rank or role' : ''}',
+            '${me?.isCommand == true ? ' · tap someone to change their rank or appointment' : ''}',
             style: t.bodySmall?.copyWith(color: c.onSurfaceVariant),
           ),
         ),
@@ -76,7 +76,7 @@ class _RosterScreenState extends ConsumerState<RosterScreen> {
               member: m,
               record: records[m.id],
               average: averages[m.id],
-              onTap: me?.role.isAno == true && m.id != me!.id && !m.role.isAno ? () => _edit(m) : null,
+              onTap: me?.isCommand == true && m.id != me!.id && !m.role.isAno ? () => _edit(m) : null,
             ),
         ]),
     ]);
@@ -115,7 +115,7 @@ class _MemberRow extends StatelessWidget {
       ),
       title: Text(member.displayName),
       subtitle: Text([
-        if (member.role != AppRole.cadet) member.role.label,
+        if (member.role != AppRole.cadet) member.appointment?.fullName ?? member.role.label,
         if (member.regimentalNo != null) member.regimentalNo!,
         if (member.trainingYear != null) 'Year ${member.trainingYear}',
         if (average != null) 'Tests ${average!.round()}%',
@@ -145,7 +145,9 @@ class _EditMemberSheet extends ConsumerStatefulWidget {
 }
 
 class _EditMemberSheetState extends ConsumerState<_EditMemberSheet> {
+  // null appointment + seniorCadet = senior cadet without an appointment.
   late AppRole _role = widget.member.role;
+  late Appointment? _appointment = widget.member.appointment;
   late String? _rank = widget.member.rank;
   bool _saving = false;
   String? _error;
@@ -156,7 +158,7 @@ class _EditMemberSheetState extends ConsumerState<_EditMemberSheet> {
       _error = null;
     });
     try {
-      await ref.read(membersProvider.notifier).updateMember(widget.member, role: _role, rank: _rank);
+      await ref.read(membersProvider.notifier).updateMember(widget.member, role: _role, rank: _rank, appointment: _appointment);
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
       if (mounted) {
@@ -185,19 +187,49 @@ class _EditMemberSheetState extends ConsumerState<_EditMemberSheet> {
             ChoiceChip(label: Text(r), selected: _rank == r, onSelected: (_) => setState(() => _rank = r)),
         ]),
         const SizedBox(height: Space.lg),
-        Text('Role', style: t.labelLarge),
+        Text('Appointment', style: t.labelLarge),
         const SizedBox(height: Space.sm),
-        SegmentedButton<AppRole>(
-          segments: const [
-            ButtonSegment(value: AppRole.cadet, label: Text('Cadet')),
-            ButtonSegment(value: AppRole.seniorCadet, label: Text('Senior cadet')),
-          ],
-          selected: {_role},
-          onSelectionChanged: (s) => setState(() => _role = s.first),
+        Wrap(spacing: Space.sm, runSpacing: Space.sm, children: [
+          ChoiceChip(
+            label: const Text('Cadet'),
+            selected: _role == AppRole.cadet,
+            onSelected: (_) => setState(() {
+              _role = AppRole.cadet;
+              _appointment = null;
+            }),
+          ),
+          for (final a in Appointment.values)
+            ChoiceChip(
+              label: Text(a.label),
+              selected: _role == AppRole.seniorCadet && _appointment == a,
+              onSelected: (_) => setState(() {
+                _role = AppRole.seniorCadet;
+                _appointment = a;
+                if (cadetRanks.indexOf(_rank ?? 'CDT') < cadetRanks.indexOf(a.label)) _rank = a.label;
+              }),
+            ),
+          ChoiceChip(
+            label: const Text('Senior cadet, no appointment'),
+            selected: _role == AppRole.seniorCadet && _appointment == null,
+            onSelected: (_) => setState(() {
+              _role = AppRole.seniorCadet;
+              _appointment = null;
+            }),
+          ),
+        ]),
+        const SizedBox(height: Space.sm),
+        Text(
+          switch ((_role, _appointment)) {
+            (AppRole.cadet, _) => 'Cadets use Learn, Ustaad, the diary and tests.',
+            (_, Appointment a) when a.isCommand =>
+              '${a.label}: full authority with the ANO. Manages the roster, publishes mocks and answers anonymous queries.',
+            (_, Appointment a) =>
+              '${a.label}: assists the CSUO / SUO. Opens the Command Center (notices, events, roll-call, mock drafts) '
+                  'but cannot change the roster or publish mocks.',
+            _ => 'Opens the Command Center to help out, without roster or publishing rights.',
+          },
+          style: t.bodySmall?.copyWith(color: c.onSurfaceVariant),
         ),
-        const SizedBox(height: Space.sm),
-        Text('Senior cadets can open the Command Center: post notices, add events, review questions and host tests.',
-            style: t.bodySmall?.copyWith(color: c.onSurfaceVariant)),
         if (_error != null) ...[
           const SizedBox(height: Space.md),
           Text(_error!, style: t.bodyMedium?.copyWith(color: c.error)),

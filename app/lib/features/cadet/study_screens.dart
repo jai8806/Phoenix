@@ -12,6 +12,7 @@ import '../../data/providers.dart';
 import '../../domain/precis_search.dart';
 import '../../domain/study_plan.dart';
 import '../shared/figures.dart';
+import '../shared/visual_notes.dart';
 import '../../domain/study_format.dart';
 import '../../data/models/figure.dart';
 import '../shared/rich_answer.dart';
@@ -253,8 +254,18 @@ class ChapterScreen extends ConsumerWidget {
             : const SizedBox.shrink();
     }
 
+    final pictures = visualNotesFor(code);
     if (precis.status != PrecisStatus.ready || passages.isEmpty) {
-      return Scaffold(appBar: AppBar(title: Text(code)), body: PageBody(children: [body]));
+      return Scaffold(
+        appBar: AppBar(title: Text(code)),
+        body: PageBody(children: [
+          body,
+          if (pictures.isNotEmpty) ...[
+            const SectionHeader('Picture notes'),
+            for (final n in pictures) ...[VisualNoteCard(n), const SizedBox(height: Space.md)],
+          ],
+        ]),
+      );
     }
 
     final bookTitle = passages.first.title;
@@ -326,6 +337,11 @@ class ChapterScreen extends ConsumerWidget {
               RichAnswer([for (final p in points) '- $p'].join('\n'), style: t.bodyMedium),
             ]),
           ),
+        ],
+        // Picture notes: the chapter's key facts as diagrams
+        if (pictures.isNotEmpty) ...[
+          SectionHeader(pictures.length == 1 ? 'Picture note' : 'Picture notes (${pictures.length})'),
+          for (final n in pictures) ...[VisualNoteCard(n), const SizedBox(height: Space.sm)],
         ],
         // Jump to a section
         if (reading.length > 1) ...[

@@ -117,6 +117,24 @@ class _AdminTestTile extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    if (test.isDraft) {
+      final pattern = ExamPattern.byId(test.pattern ?? 'bcert');
+      final missing = pattern.questionCount - test.questionIds.length;
+      return ListTile(
+        leading: Icon(Icons.edit_note, color: Theme.of(context).colorScheme.primary),
+        title: Text(test.title),
+        subtitle: Text(['Draft · ${pattern.name} pattern', if (missing > 0) '$missing empty', 'only admins can see it'].join(' · ')),
+        onTap: () => context.push(Routes.mockDraft(test.id)),
+        trailing: PopupMenuButton<String>(
+          tooltip: 'Draft options',
+          onSelected: (v) => v == 'delete' ? _delete(context, ref) : context.push(Routes.mockDraft(test.id)),
+          itemBuilder: (_) => const [
+            PopupMenuItem(value: 'open', child: Text('Check and edit')),
+            PopupMenuItem(value: 'delete', child: Text('Delete draft')),
+          ],
+        ),
+      );
+    }
     final open = test.isOpen(now);
     return ListTile(
       leading: Icon(open ? Icons.assignment_outlined : Icons.assignment_turned_in_outlined,
@@ -246,8 +264,9 @@ class _NewTestDialogState extends ConsumerState<NewTestDialog> {
       _error = null;
     });
     try {
-      await ref.read(testsProvider.notifier).create(NewTest(
+      final id = await ref.read(testsProvider.notifier).create(NewTest(
             title: title,
+            draft: true,
             durationMinutes: pattern.durationMinutes,
             marking: pattern.marking,
             questionIds: [for (final e in entries) e.value],
@@ -259,10 +278,9 @@ class _NewTestDialogState extends ConsumerState<NewTestDialog> {
             uploadMinutes: _uploadMinutes,
           ));
       if (!mounted) return;
+      final router = GoRouter.of(context);
       Navigator.of(context).pop();
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Mock created. Open it to print the OMR sheets, then start it on exam day.'),
-      ));
+      router.push(Routes.mockDraft(id));
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -292,8 +310,13 @@ class _NewTestDialogState extends ConsumerState<NewTestDialog> {
         onSelectionChanged: (s) => setState(() => _omrPattern = s.first),
       ),
       const SizedBox(height: Space.sm),
-      Text('${pattern.questionCount} questions · ${pattern.totalMarks.toStringAsFixed(0)} marks · 3 hours · '
-          '+2 / −0.5 · ${pattern.papers.length} papers, 33% each to pass. Sets A1 and A2.',
+      Text('Exactly like the real paper (${pattern.basedOn}): ${pattern.questionCount} questions · '
+          '${fmtNum(pattern.totalMarks)} marks · ${pattern.durationMinutes ~/ 60} hours · '
+          '+${fmtNum(pattern.marking.correct)} / −${fmtNum(pattern.marking.wrong)} · '
+          '${[for (final p in pattern.papers) '${p.shortTitle} ${p.count}'].join(', ')} · 33% in each paper to pass. Sets A1 and A2.',
+          style: t.bodySmall?.copyWith(color: c.onSurfaceVariant)),
+      const SizedBox(height: Space.xs),
+      Text('You get a draft first: check every question and answer, change any, then schedule it.',
           style: t.bodySmall?.copyWith(color: c.onSurfaceVariant)),
       const SizedBox(height: Space.sm),
       if (missing == 0)
@@ -442,7 +465,7 @@ class _NewTestDialogState extends ConsumerState<NewTestDialog> {
         TextButton(onPressed: _saving ? null : () => Navigator.of(context).pop(), child: const Text('Cancel')),
         FilledButton(
           onPressed: _saving ? null : _create,
-          child: Text(_saving ? 'Creating…' : 'Create test'),
+          child: Text(_saving ? 'Creating…' : (_kind == _Kind.omr ? 'Generate draft' : 'Create test')),
         ),
       ],
     );

@@ -47,7 +47,7 @@ void main() {
     ];
     final risk = cadetsAtRisk(attempts);
     expect(risk.map((r) => r.cadetId), ['weak']);
-    expect(risk.single.failing.single.$1.title, contains('SPECIALISED'));
+    expect(risk.single.failing.single.$1.title, contains('SPECIAL SUBJECT'));
     final papers = paperPercents(attempts[2], bCertPattern);
     expect(papers.first.$2, closeTo((9 * 2 - 1 * 0.5) / 20 * 100, 1e-9));
   });

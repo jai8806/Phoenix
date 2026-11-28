@@ -159,7 +159,7 @@ class SupabaseAuthRepository implements AuthRepository {
   Future<AppUser> _loadProfile(String id) async {
     final row = await _client
         .from('profiles')
-        .select('id, full_name, role, rank, regimental_no, wing, division, training_year, unit_id, units(name)')
+        .select('id, full_name, role, rank, appointment, regimental_no, wing, division, training_year, unit_id, units(name)')
         .eq('id', id)
         .single();
     return appUserFromRow(row);

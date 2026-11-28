@@ -6,6 +6,7 @@ import '../../core/router/app_router.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/tokens.dart';
 import '../../data/models/user.dart';
+import '../../data/models/queries.dart';
 import '../../data/providers.dart';
 import '../shared/widgets.dart';
 
@@ -28,6 +29,7 @@ class OverviewScreen extends ConsumerWidget {
       if (user?.unitName != null) Text(user!.unitName!, style: t.bodyMedium?.copyWith(color: c.onSurfaceVariant)),
       const SizedBox(height: Space.xl),
       if (live) const _LiveSummary() else const _SampleSummary(),
+      if (live && (user?.canHandleQueries(toAllSeniors: true) ?? false)) const _QueriesCard(),
       const SectionHeader('Coming up'),
       if (upcoming.isEmpty)
         const EmptyState(icon: Icons.event_available, title: 'Nothing scheduled',
@@ -137,5 +139,35 @@ class _SampleSummary extends ConsumerWidget {
             ),
         ]),
     ]);
+  }
+}
+
+
+/// CSUO / SUO (and JUO / CSM / CQMS): anonymous queries waiting for them.
+class _QueriesCard extends ConsumerWidget {
+  const _QueriesCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final list = ref.watch(queryInboxProvider).value ?? const <AnonQuery>[];
+    final waiting = list.where((q) => q.awaitingSenior).length;
+    return Padding(
+      padding: const EdgeInsets.only(top: Space.md),
+      child: Card(
+        child: ListTile(
+          leading: Badge(
+            isLabelVisible: waiting > 0,
+            label: Text('$waiting'),
+            child: const Icon(Icons.forum_outlined),
+          ),
+          title: const Text('Anonymous queries'),
+          subtitle: Text(waiting == 0
+              ? 'Nothing waiting. Cadets ask here without their names; the ANO does not see them.'
+              : '$waiting waiting for a reply'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => context.push(Routes.queryInbox),
+        ),
+      ),
+    );
   }
 }

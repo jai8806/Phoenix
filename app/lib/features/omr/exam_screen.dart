@@ -633,7 +633,7 @@ class _ResultView extends StatelessWidget {
         for (final p in papers)
           ListTile(
             leading: Icon(p.passed ? Icons.check_circle : Icons.cancel, color: p.passed ? context.status.success : c.error),
-            title: Text(p.paper.title.replaceFirst(RegExp(r'^PAPER - [IVX]+ : '), '')),
+            title: Text(p.paper.shortTitle),
             subtitle: LinearProgressIndicator(value: (p.percent / 100).clamp(0, 1)),
             trailing: Text('${fmtScore(p.score)} / ${fmtScore(p.max)}', style: t.titleSmall),
           ),
