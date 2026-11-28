@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../../core/theme/app_theme.dart';
 import '../../core/theme/tokens.dart';
 import '../../data/models/figure.dart';
 import '../../data/models/ustaad.dart';
@@ -13,7 +14,15 @@ import '../shared/rich_answer.dart';
 
 class _Message {
   const _Message(this.text,
-      {required this.fromCadet, this.question, this.answer, this.sources = const [], this.isError = false, this.isAi = false});
+      {required this.fromCadet,
+      this.question,
+      this.answer,
+      this.sources = const [],
+      this.isError = false,
+      this.isAi = false,
+      this.ai,
+      this.aiPending = false,
+      this.offlineNote});
   final String text;
   final bool fromCadet;
 
@@ -25,6 +34,16 @@ class _Message {
   final List<UstaadSource> sources;
   final bool isError;
   final bool isAi;
+
+  /// Ustaad's AI answer, written from the passages the phone found.
+  final UstaadReply? ai;
+  final bool aiPending;
+
+  /// Why the précis lines are shown instead of an AI answer.
+  final String? offlineNote;
+
+  _Message withAi({UstaadReply? ai, String? offlineNote}) => _Message(text,
+      fromCadet: fromCadet, question: question, answer: answer, ai: ai, offlineNote: offlineNote);
 }
 
 /// Ustaad, the study assistant. It answers from the précis saved on the phone:
@@ -86,14 +105,40 @@ class _UstaadScreenState extends ConsumerState<UstaadScreen> {
         case PrecisStatus.ready:
           final senior = ref.read(authControllerProvider)?.division?.isSenior ?? true;
           final answer = askUstaad(question, precis.search!, preferSenior: senior);
-          _messages.add(answer.found
-              ? _Message('', fromCadet: false, question: question, answer: answer)
-              : const _Message(
-                  "That isn't in your précis. Try the words the book uses, e.g. \"types of north\" or "
-                  '"judging distance".',
-                  fromCadet: false));
+          final passages = precis.search!.retrieve(question, preferSenior: senior);
+          final useAi = ref.read(isLiveProvider) && answer.fact == null && passages.isNotEmpty;
+          if (useAi) {
+            _messages.add(_Message('', fromCadet: false, question: question, answer: answer, aiPending: true));
+            _answerWithAi(_messages.length - 1, question, passages);
+          } else {
+            _messages.add(answer.found
+                ? _Message('', fromCadet: false, question: question, answer: answer)
+                : const _Message(
+                    "That isn't in your précis. Try the words the book uses, e.g. \"types of north\" or "
+                    '"judging distance".',
+                    fromCadet: false));
+          }
       }
     });
+    _toBottom();
+  }
+
+  /// Ustaad's main answer: the AI reads the passages the phone found and
+  /// writes the answer. Offline or on any failure, the précis lines stay.
+  Future<void> _answerWithAi(int index, String question, List<PrecisPassage> passages) async {
+    final repo = ref.read(unitRepositoryProvider);
+    if (repo == null) return;
+    try {
+      final reply = await repo.askUstaad(question, mode: 'answer', chunkIds: [for (final p in passages) p.id]);
+      if (!mounted || index >= _messages.length) return;
+      setState(() => _messages[index] = reply.covered
+          ? _messages[index].withAi(ai: reply)
+          : _messages[index].withAi(offlineNote: "Ustaad couldn't find a clear answer. These are the closest lines in your précis."));
+    } catch (e) {
+      if (!mounted || index >= _messages.length) return;
+      setState(() => _messages[index] = _messages[index].withAi(
+          offlineNote: e is UnitDataFailure ? '${e.message} Showing the matching lines from your précis.' : 'Offline: showing the matching lines from your précis.'));
+    }
     _toBottom();
   }
 
@@ -197,10 +242,28 @@ class _UstaadScreenState extends ConsumerState<UstaadScreen> {
                         if (i == _messages.length) return const _Thinking();
                         final m = _messages[i];
                         final a = m.answer;
+                        if (a != null && m.aiPending) return const _Thinking(label: 'Ustaad is reading your précis…');
+                        if (a != null && m.ai != null) {
+                          final top = a.precis.passages.isEmpty ? null : a.precis.passages.first;
+                          return _AiAnswer(
+                            reply: m.ai!,
+                            precis: a.precis.found ? a.precis : null,
+                            figures: top == null
+                                ? const []
+                                : precis.figuresFor(top.heading.split(' · ').first, book: top.title,
+                                    fromPage: top.page, toPage: top.pageEnd ?? top.page),
+                            onExplain: !_thinking ? () => _explain(m.question!, a) : null,
+                          );
+                        }
                         if (a != null) {
                           final explain = ref.watch(isLiveProvider) && !_thinking ? () => _explain(m.question!, a) : null;
                           final top = a.precis.passages.isEmpty ? null : a.precis.passages.first;
                           return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            if (m.offlineNote != null)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: Space.xs),
+                                child: Text(m.offlineNote!, style: t.bodySmall?.copyWith(color: c.onSurfaceVariant)),
+                              ),
                             if (a.fact != null) _FactBubble(fact: a.fact!, onExplain: a.precis.found ? null : explain),
                             if (top != null && a.precis.found)
                               _PrecisBubble(
@@ -373,8 +436,101 @@ class _FactBubble extends StatelessWidget {
   }
 }
 
+/// Ustaad's answer, written by the AI from the précis, with its sources, the
+/// précis lines it used on demand, and "Explain simply".
+class _AiAnswer extends StatefulWidget {
+  const _AiAnswer({required this.reply, this.precis, this.figures = const [], this.onExplain});
+
+  final UstaadReply reply;
+  final PrecisAnswer? precis;
+  final List<PrecisFigure> figures;
+  final VoidCallback? onExplain;
+
+  @override
+  State<_AiAnswer> createState() => _AiAnswerState();
+}
+
+class _AiAnswerState extends State<_AiAnswer> {
+  bool _showLines = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context).textTheme;
+    final c = Theme.of(context).colorScheme;
+    final r = widget.reply;
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: Space.sm),
+        padding: const EdgeInsets.all(Space.lg),
+        constraints: const BoxConstraints(maxWidth: 600),
+        decoration: BoxDecoration(
+          color: c.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(Radii.lg),
+          border: Border(left: BorderSide(color: r.general ? context.status.warning : c.primary, width: 3)),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Wrap(crossAxisAlignment: WrapCrossAlignment.center, spacing: Space.xs, children: [
+            Icon(r.general ? Icons.info_outline : Icons.menu_book_outlined, size: 16, color: r.general ? context.status.warning : c.primary),
+            Text(r.general ? 'NOT IN YOUR PRÉCIS' : 'USTAAD · FROM YOUR PRÉCIS',
+                style: t.labelSmall?.copyWith(color: r.general ? context.status.warning : c.primary, letterSpacing: 1.1)),
+          ]),
+          if (r.general)
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text('General knowledge: check it with your ANO before relying on it.',
+                  style: t.bodySmall?.copyWith(color: c.onSurfaceVariant)),
+            ),
+          const SizedBox(height: Space.sm),
+          RichAnswer(r.answer, style: t.bodyMedium),
+          if (widget.figures.isNotEmpty && !r.general) ...[
+            const SizedBox(height: Space.md),
+            FigureStrip(figures: widget.figures.take(4).toList(), height: 96),
+          ],
+          if (r.sources.isNotEmpty) ...[
+            const SizedBox(height: Space.md),
+            Text('SOURCES', style: t.labelSmall?.copyWith(color: c.onSurfaceVariant, letterSpacing: 1.1)),
+            const SizedBox(height: 2),
+            for (final s in r.sources)
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Text('${s.n}  ${s.label}', style: t.bodySmall?.copyWith(color: c.onSurfaceVariant)),
+              ),
+          ],
+          if (_showLines && widget.precis != null) ...[
+            const Divider(height: Space.xl),
+            for (final s in widget.precis!.snippets) ...[
+              RichAnswer(s.text, style: t.bodySmall),
+              Padding(
+                padding: const EdgeInsets.only(top: 2, bottom: Space.sm),
+                child: Text(s.passage.citation, style: t.labelSmall?.copyWith(color: c.onSurfaceVariant)),
+              ),
+            ],
+          ],
+          Wrap(spacing: Space.sm, children: [
+            if (widget.precis != null)
+              TextButton.icon(
+                onPressed: () => setState(() => _showLines = !_showLines),
+                icon: Icon(_showLines ? Icons.expand_less : Icons.format_quote_outlined, size: 18),
+                label: Text(_showLines ? 'Hide the précis lines' : 'Show the précis lines'),
+              ),
+            if (widget.onExplain != null)
+              TextButton.icon(
+                onPressed: widget.onExplain,
+                icon: const Icon(Icons.auto_awesome, size: 18),
+                label: const Text('Explain simply'),
+              ),
+          ]),
+        ]),
+      ),
+    );
+  }
+}
+
 class _Thinking extends StatelessWidget {
-  const _Thinking();
+  const _Thinking({this.label = 'Writing a simpler explanation…'});
+
+  final String label;
 
   @override
   Widget build(BuildContext context) {
@@ -388,7 +544,7 @@ class _Thinking extends StatelessWidget {
         child: Row(mainAxisSize: MainAxisSize.min, children: [
           const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
           const SizedBox(width: Space.sm),
-          Text('Writing a simpler explanation…', style: Theme.of(context).textTheme.bodyMedium),
+          Flexible(child: Text(label, style: Theme.of(context).textTheme.bodyMedium)),
         ]),
       ),
     );

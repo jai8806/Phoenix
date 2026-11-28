@@ -5,6 +5,7 @@ import {
   citedSources,
   mergePassages,
   SYSTEM_PROMPT,
+  ANSWER_PROMPT,
   ConfigError,
   ModelError,
   modelConfig,
@@ -123,4 +124,28 @@ Deno.test("passages the app showed come first and are not repeated", () => {
 Deno.test("prompt asks for simple English and flat bullets", () => {
   assert(SYSTEM_PROMPT.includes("simple English"));
   assert(SYSTEM_PROMPT.includes("No nested points"));
+});
+
+Deno.test("answer mode uses the answer prompt and keeps citations", async () => {
+  const seen: any = {};
+  const reply = { candidates: [{ content: { parts: [{ text: "The HQ is in **Rivertown** [1]." }] } }] };
+  const out = await answerQuestion("Where is the HQ?", passages, gemini, fakeFetch(reply, 200, seen), [], "answer");
+  assertStringIncludes(seen.body.systemInstruction.parts[0].text, "Answer the cadet's question accurately");
+  assertEquals(out.sources.map((s) => s.n), [1]);
+  assertEquals(out.general, false);
+});
+
+Deno.test("general-knowledge answers are labelled and carry no précis sources", async () => {
+  const reply = { candidates: [{ content: { parts: [{ text: "GENERAL: The NCC flag has three colours." }] } }] };
+  const out = await answerQuestion("NCC flag colours?", passages, gemini, fakeFetch(reply), [], "answer");
+  assertEquals(out.general, true);
+  assertEquals(out.answer, "The NCC flag has three colours.");
+  assertEquals(out.sources, []);
+});
+
+Deno.test("answer mode may answer with no passages at all", async () => {
+  const reply = { candidates: [{ content: { parts: [{ text: "GENERAL: Fourth Sunday of November." }] } }] };
+  const out = await answerQuestion("When is NCC Day?", [], gemini, fakeFetch(reply), [], "answer");
+  assertEquals(out.covered, true);
+  assert(ANSWER_PROMPT.includes("Never invent names"));
 });

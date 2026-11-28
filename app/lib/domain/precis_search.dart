@@ -154,6 +154,51 @@ class PrecisSearch {
     return best;
   }
 
+  /// The [k] passages most likely to hold the answer, best first: what the AI
+  /// reads to write Ustaad's answer.
+  List<PrecisPassage> retrieve(String question, {int k = 8, bool preferSenior = true}) {
+    final (terms, unknown) = queryTerms(question);
+    if (terms.isEmpty || passages.isEmpty) return const [];
+    final expansions = expansionTerms(question);
+    final required = [for (final t in terms) if (!expansions.contains(t)) t];
+    final totalWeight = (required.isEmpty ? terms : required).fold(0.0, (a, t) => a + _idf(t)) + unknown * _unknownIdf;
+    final scored = <(double, int)>[];
+    for (var i = 0; i < passages.length; i++) {
+      final tf = _tf[i];
+      final len = _docs[i].length;
+      var s = 0.0, covered = 0.0;
+      for (final t in terms) {
+        final f = tf[t];
+        if (f == null) continue;
+        if (required.isEmpty || !expansions.contains(t)) covered += _idf(t);
+        s += _idf(t) * f * (_k1 + 1) / (f + _k1 * (1 - _b + _b * len / _avgLength)) * (expansions.contains(t) ? 0.6 : 1);
+      }
+      // Looser than [answer]: the AI can ignore a passage that turns out off topic.
+      if (s <= 0 || covered / totalWeight < 0.4) continue;
+      final p = passages[i];
+      final headingWords = tokenize(p.heading).toSet();
+      final inHeading = terms.where(headingWords.contains).fold(0.0, (a, t) => a + _idf(t)) / totalWeight;
+      s *= 1 + 0.6 * inHeading;
+      if (preferSenior && p.title.contains('JD/JW')) s *= 0.9;
+      if (p.title.contains('Oct 2025')) s *= 1.05;
+      if (_isHinglish(p.content)) s *= 0.35;
+      if (p.title.startsWith('MCQ Bank') || p.title.startsWith('B Cert Paper') || p.title.startsWith('General NCC')) s *= 0.5;
+      scored.add((s, i));
+    }
+    scored.sort((a, b) => b.$1.compareTo(a.$1));
+    // Skip word-for-word copies (the JD/JW and SD/SW books share many paragraphs).
+    final out = <PrecisPassage>[];
+    final seen = <String>{};
+    for (final (_, i) in scored) {
+      final key = _norm(passages[i].content);
+      final head = key.substring(0, key.length.clamp(0, 120));
+      if (!seen.add(head)) continue;
+      out.add(passages[i]);
+      if (out.length == k) break;
+    }
+    return out;
+  }
+
   /// Answers from the précis: the best passage's most relevant sentence with
   /// the context a reader needs (the sentence before a "This…", the items of
   /// a list it introduces), then up to two other places that say the same.
@@ -392,6 +437,10 @@ const _stop = {
   'this', 'to', 'was', 'what', 'when', 'where', 'which', 'who', 'whom', 'why', 'will', 'with', 'you', 'your',
   'about', 'explain', 'describe', 'define', 'meant', 'mean', 'means', 'give', 'list', 'name', 'some', 'any',
   'please', 'kya', 'hai', 'ka', 'ki', 'ke',
+  // Hindi / Hinglish question words cadets type.
+  'kitne', 'kitna', 'kitni', 'hote', 'hota', 'hoti', 'hain', 'kaise', 'kab', 'kaun', 'kon', 'kahan', 'kis', 'kisko',
+  'mein', 'aur', 'ko', 'se', 'batao', 'bata', 'bataiye', 'samjhao', 'matlab', 'yaar', 'bhai', 'bro',
+  'should', 'would', 'could', 'happens', 'happened',
 };
 
 /// NCC shorthand and common phrasings mapped to the précis' own words.
@@ -438,6 +487,9 @@ const synonyms = <String, String>{
   'ssb': 'services selection board',
   'goh': 'guard of honour',
   'raised': 'came into existence formally',
+  'night': 'night pole star',
+  'qualities': 'traits qualities',
+  'leader': 'leadership leader',
   'gallantry': 'valour',
   'formed': 'came into existence formally',
   'started': 'came into existence formally',

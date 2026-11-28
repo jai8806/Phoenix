@@ -9,7 +9,7 @@
 //   USTAAD_DAILY_LIMIT  optional questions per cadet per day (default 50)
 
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { answerQuestion, ConfigError, mergePassages, ModelError, modelConfig, type Passage } from "./core.ts";
+import { answerQuestion, ConfigError, mergePassages, type Mode, ModelError, modelConfig, type Passage } from "./core.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -30,12 +30,14 @@ Deno.serve(async (req) => {
   let question = "";
   let chunkIds: number[] = [];
   let facts: string[] = [];
+  let mode: Mode = "simple";
   try {
     const body = await req.json();
     question = String(body.question ?? "").trim();
+    mode = body.mode === "answer" ? "answer" : "simple";
     // Passages the app already found and showed, and any checked quick fact.
     chunkIds = (Array.isArray(body.chunk_ids) ? body.chunk_ids : [])
-      .map(Number).filter((n: number) => Number.isInteger(n) && n > 0).slice(0, 6);
+      .map(Number).filter((n: number) => Number.isInteger(n) && n > 0).slice(0, 8);
     facts = (Array.isArray(body.facts) ? body.facts : [])
       .map((f: unknown) => String(f).slice(0, 1200)).filter((f: string) => f.trim()).slice(0, 2);
   } catch {
@@ -74,15 +76,21 @@ Deno.serve(async (req) => {
       content: r!.content as string,
     }));
   }
-  const { data: searched, error: searchError } = await supabase.rpc("search_chunks", { q: question, match_count: 6 });
-  if (searchError && !chosen.length) {
-    return json({ error: "Couldn't search the study material right now. Try again shortly." }, 502);
+  // The app's own search is better than the database's word match: only top
+  // up from the database when the app sent few passages.
+  let searched: Passage[] = [];
+  if (chosen.length < 3) {
+    const { data, error: searchError } = await supabase.rpc("search_chunks", { q: question, match_count: 6 });
+    if (searchError && !chosen.length) {
+      return json({ error: "Couldn't search the study material right now. Try again shortly." }, 502);
+    }
+    searched = (data ?? []) as Passage[];
   }
-  const passages = mergePassages(chosen, (searched ?? []) as Passage[], chosen.length ? 4 : 6);
+  const passages = mergePassages(chosen, searched, 8);
 
   try {
     const cfg = modelConfig((k) => Deno.env.get(k));
-    const result = await answerQuestion(question, passages, cfg, fetch, facts);
+    const result = await answerQuestion(question, passages, cfg, fetch, facts, mode);
     await supabase.from("ustaad_log").insert({ user_id: userId, question, answered: result.covered });
     return json(result);
   } catch (e) {

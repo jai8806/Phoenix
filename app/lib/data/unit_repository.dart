@@ -31,7 +31,10 @@ abstract interface class UnitRepository {
 
   /// The AI's plain explanation. [chunkIds] are the précis passages the app
   /// already found and [facts] any checked quick fact, so both answers agree.
-  Future<UstaadReply> askUstaad(String question, {List<int> chunkIds = const [], List<String> facts = const []});
+  ///
+  /// [mode] 'answer' writes Ustaad's main answer; 'simple' explains it more simply.
+  Future<UstaadReply> askUstaad(String question,
+      {List<int> chunkIds = const [], List<String> facts = const [], String mode = 'simple'});
 
   /// Every précis passage this member may read, for offline search.
   Future<List<PrecisPassage>> precisPassages();
@@ -467,12 +470,13 @@ class SupabaseUnitRepository implements UnitRepository {
       }, 'update the cadet');
 
   @override
-  Future<UstaadReply> askUstaad(String question, {List<int> chunkIds = const [], List<String> facts = const []}) async {
+  Future<UstaadReply> askUstaad(String question,
+      {List<int> chunkIds = const [], List<String> facts = const [], String mode = 'simple'}) async {
     try {
       final res = await _client.functions.invoke('ustaad', body: {
         'question': question,
-        'mode': 'simple',
-        if (chunkIds.isNotEmpty) 'chunk_ids': chunkIds.take(6).toList(),
+        'mode': mode,
+        if (chunkIds.isNotEmpty) 'chunk_ids': chunkIds.take(8).toList(),
         if (facts.isNotEmpty) 'facts': facts.take(2).toList(),
       });
       return UstaadReply.fromJson(Map<String, dynamic>.from(res.data as Map));

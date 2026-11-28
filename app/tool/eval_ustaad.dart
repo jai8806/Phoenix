@@ -11,7 +11,7 @@ import 'dart:io';
 import 'package:phoenix/domain/precis_search.dart';
 import 'package:phoenix/domain/quick_facts.dart';
 
-void main(List<String> args) {
+Future<void> main(List<String> args) async {
   final buildDir = Directory(args[0]);
   final questions = (jsonDecode(File(args[1]).readAsStringSync()) as List).cast<Map<String, dynamic>>();
   final verbose = args.contains('-v');
@@ -34,6 +34,41 @@ void main(List<String> args) {
     }
   }
   final search = PrecisSearch(passages);
+  final export = args.firstWhere((a) => a.startsWith('--export='), orElse: () => '');
+  if (export.isNotEmpty) {
+    // What the app sends the AI for each question, for tools/eval/ai_eval.py.
+    final out = File(export.substring(9)).openWrite();
+    for (final item in questions) {
+      final q = item['q'] as String;
+      final fact = quickFactFor(q);
+      out.writeln(jsonEncode({
+        ...item,
+        'fact': fact?.answer,
+        'passages': [
+          for (final p in search.retrieve(q, k: 8))
+            {'title': p.title, 'heading': p.heading, 'page': p.page, 'page_end': p.pageEnd, 'content': p.content},
+        ],
+      }));
+    }
+    await out.close();
+    return;
+  }
+  final k = int.tryParse(args.firstWhere((a) => a.startsWith('--k='), orElse: () => '--k=0').substring(4)) ?? 0;
+  if (k > 0) {
+    // Retrieval recall: is the answer anywhere in the top k passages (plus any quick fact)?
+    var hit = 0;
+    for (final item in questions) {
+      final q = item['q'] as String;
+      final fact = quickFactFor(q);
+      final text = [if (fact != null) fact.answer, for (final p in search.retrieve(q, k: k)) p.content].join(' ').toLowerCase();
+      bool has(String alt) => alt.split('|').any(text.contains);
+      final ok = item['any'] != null ? (item['any'] as List).cast<String>().any(has) : (item['all'] as List).cast<String>().every(has);
+      if (ok) hit++;
+      if (!ok || verbose) stdout.writeln('${ok ? 'HIT ' : 'MISS'}  $q');
+    }
+    stdout.writeln('\nanswer in top $k passages: $hit / ${questions.length}');
+    return;
+  }
   final sw = Stopwatch()..start();
   var pass = 0;
   for (final item in questions) {

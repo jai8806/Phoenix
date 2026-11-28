@@ -1,13 +1,11 @@
 // Screenshots of the OMR screens: PREVIEW=1 flutter test test/omr/omr_preview_test.dart --update-goldens
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:material_ui/material_ui.dart';
 import 'package:phoenix/app.dart';
 import 'package:phoenix/core/router/app_router.dart';
 import 'package:phoenix/data/models/test.dart';

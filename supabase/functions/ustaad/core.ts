@@ -22,7 +22,30 @@ export interface Answer {
   answer: string;
   sources: Source[];
   covered: boolean;
+  /** True when the passages didn't cover it and the model answered from general knowledge. */
+  general?: boolean;
 }
+
+export type Mode = "answer" | "simple";
+
+export const ANSWER_PROMPT = `You are Ustaad, a study assistant for NCC (National Cadet Corps) cadets in India preparing for the B and C Certificate exams.
+Answer the cadet's question accurately, using the checked facts and the numbered précis passages provided.
+
+How to answer:
+- Read every passage, find the ones that actually answer the question, and answer exactly what was asked.
+- Checked facts are verified and newer than the précis: when they disagree, follow the checked facts.
+- Combine information from several passages when needed (for example a full list split across passages).
+- Cite the passages you used with their numbers at the end of the line they support, e.g. [1] or [2][3]. Do not cite checked facts.
+- If the passages and facts do not contain the answer but you are confident from general knowledge of the NCC and
+  Indian Armed Forces, answer briefly and begin your reply with "GENERAL:". Never invent names, numbers or dates.
+- If you cannot answer reliably, reply exactly: NOT_COVERED
+- Do not give weapon-handling instructions beyond the passages; live firing is only under a qualified instructor.
+
+Format:
+- Start with a direct one or two sentence answer, in simple English (Hindi only if the question is in Hindi script).
+- Then, if useful, up to 6 short points, each on its own line starting with "- ". No nested points, headings or tables.
+- Use **bold** for key terms, names and numbers.
+- Keep it under 170 words.`;
 
 export const NOT_COVERED =
   "I couldn't find this in your unit's study material. Ask your ANO, or try asking with words from the précis.";
@@ -151,9 +174,15 @@ export async function answerQuestion(
   cfg: ModelConfig,
   fetcher: Fetch = fetch,
   facts: string[] = [],
+  mode: Mode = "simple",
 ): Promise<Answer> {
-  if (passages.length === 0 && facts.length === 0) return { answer: NOT_COVERED, sources: [], covered: false };
-  const text = await callModel(cfg, SYSTEM_PROMPT, buildUserPrompt(question, passages, facts), fetcher);
-  if (!text || text.includes("NOT_COVERED")) return { answer: NOT_COVERED, sources: [], covered: false };
-  return { answer: text, sources: citedSources(text, passages), covered: true };
+  if (mode === "simple" && passages.length === 0 && facts.length === 0) {
+    return { answer: NOT_COVERED, sources: [], covered: false };
+  }
+  const system = mode === "answer" ? ANSWER_PROMPT : SYSTEM_PROMPT;
+  const raw = await callModel(cfg, system, buildUserPrompt(question, passages, facts), fetcher);
+  if (!raw || raw.includes("NOT_COVERED")) return { answer: NOT_COVERED, sources: [], covered: false };
+  const general = mode === "answer" && /^\s*GENERAL:/i.test(raw);
+  const text = raw.replace(/^\s*GENERAL:\s*/i, "").trim();
+  return { answer: text, sources: general ? [] : citedSources(text, passages), covered: true, general };
 }

@@ -38,6 +38,8 @@ class FakeUnitRepo implements UnitRepository {
   bool failPost = false;
   bool offline = false;
   int aiCalls = 0;
+  final lastAiModes = <String>[];
+  List<int> lastAiChunks = const [];
 
   static const demoPassages = [
     PrecisPassage(id: 1, title: 'Demo Army Book', heading: 'AF I · Introduction', page: 2,
@@ -210,8 +212,12 @@ class FakeUnitRepo implements UnitRepository {
       memberUpdates.add((id, role, rank));
 
   @override
-  Future<UstaadReply> askUstaad(String question, {List<int> chunkIds = const [], List<String> facts = const []}) async {
+  Future<UstaadReply> askUstaad(String question,
+      {List<int> chunkIds = const [], List<String> facts = const [], String mode = 'simple'}) async {
     aiCalls++;
+    lastAiModes.add(mode);
+    lastAiChunks = chunkIds;
+    if (offline) throw const UnitDataFailure("Couldn't reach Ustaad. Check your connection and try again.");
     return const UstaadReply(
         answer: 'The President of India is the Supreme Commander [1].',
         covered: true,
@@ -343,24 +349,38 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('Ustaad answers from the précis without AI; Explain simply calls the AI', (tester) async {
+  testWidgets('online, the AI writes the answer from the passages the phone found; Explain simply asks again', (tester) async {
     final (c, repo) = await pumpLive(tester, cadet);
     await tester.tap(find.text('Ustaad'));
     await tester.pumpAndSettle();
     expect(find.text('Offline ready'), findsOneWidget);
 
     await ask(tester, 'Who is the supreme commander?');
-    expect(find.text('FROM YOUR PRÉCIS'), findsOneWidget);
-    expect(find.text('The President of India is the Supreme Commander of the Indian Armed Forces.'), findsOneWidget);
-    expect(find.text('Demo Army Book · AF I · Introduction · p. 2'), findsWidgets);
-    expect(repo.aiCalls, 0); // no AI for the main answer
+    expect(repo.lastAiModes, ['answer']);
+    expect(repo.lastAiChunks, contains(1)); // the passage that holds the answer
+    expect(find.text('USTAAD · FROM YOUR PRÉCIS'), findsOneWidget);
+    expect(find.textContaining('The President of India is the Supreme Commander', findRichText: true), findsOneWidget);
+    expect(find.textContaining('Special Subject (Army) JD/JW (2025) · AF I · Introduction · p. 2'), findsOneWidget);
+
+    // The précis lines it was written from, on demand.
+    await tester.tap(find.text('Show the précis lines'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Demo Army Book · AF I · Introduction · p. 2'), findsWidgets);
 
     await tester.tap(find.text('Explain simply'));
     await tester.pumpAndSettle();
-    expect(repo.aiCalls, 1);
+    expect(repo.lastAiModes, ['answer', 'simple']);
     expect(find.text('AI EXPLANATION'), findsOneWidget);
-    expect(find.text('[1] Special Subject (Army) JD/JW (2025) · AF I · Introduction · p. 2'), findsOneWidget);
     expect(c.read(precisPackStoreProvider), isA<MemoryPrecisPackStore>());
+  });
+
+  testWidgets('quick facts answer at once, without spending the AI quota', (tester) async {
+    final (_, repo) = await pumpLive(tester, cadet, size: const Size(420, 1400));
+    await tester.tap(find.text('Ustaad'));
+    await tester.pumpAndSettle();
+    await ask(tester, 'who is dg ncc');
+    expect(find.text('QUICK FACT'), findsOneWidget);
+    expect(repo.aiCalls, 0);
   });
 
   testWidgets('Ustaad says plainly when the précis does not cover a question', (tester) async {
@@ -377,6 +397,7 @@ void main() {
     await tester.tap(find.text('Ustaad'));
     await tester.pumpAndSettle();
     await ask(tester, 'what is magnetic north');
+    expect(find.textContaining(RegExp('matching lines from your précis')), findsOneWidget);
     expect(find.text('(b)'), findsOneWidget); // the list marker, shown on its own
     expect(find.textContaining('Magnetic north is shown by the compass needle.', findRichText: true), findsOneWidget);
   });
@@ -757,7 +778,8 @@ class _ExplainRepo extends FakeUnitRepo {
   List<int> lastChunkIds = const [];
 
   @override
-  Future<UstaadReply> askUstaad(String question, {List<int> chunkIds = const [], List<String> facts = const []}) async {
+  Future<UstaadReply> askUstaad(String question,
+      {List<int> chunkIds = const [], List<String> facts = const [], String mode = 'simple'}) async {
     lastChunkIds = chunkIds;
     return const UstaadReply(
       answer: '**Magnetic north** is where a compass needle points [1].\n- It moves slowly over time\n  * nested point\nRemember: compass = magnetic.',
