@@ -19,6 +19,18 @@ abstract interface class UnitRepository {
   Future<List<CalendarEvent>> events();
   Future<void> addEvent(CalendarEvent event);
 
+  /// The member's own replies to roll-calls.
+  Future<List<EventResponse>> myResponses();
+
+  /// Coming, or absent with a reason. Can be changed until replies close.
+  Future<void> respondToEvent(String eventId, Attendance status, {String? reason});
+
+  /// Everyone's replies to one event (admins).
+  Future<List<EventResponse>> eventResponses(String eventId);
+
+  /// Admins: whether a cadet actually came.
+  Future<void> markAttendance(String eventId, String cadetId, bool attended);
+
   Future<List<DiaryEntry>> diary();
   Future<void> addDiaryEntry(DiaryEntry entry);
 
@@ -157,8 +169,56 @@ class SupabaseUnitRepository implements UnitRepository {
           'ends_at': e.endsAt?.toUtc().toIso8601String(),
           'location': e.location,
           'created_by': _user.id,
+          'details': e.details,
+          'needs_response': e.needsResponse,
+          'respond_by': e.respondBy?.toUtc().toIso8601String(),
         });
       }, 'add the event');
+
+  @override
+  Future<List<EventResponse>> myResponses() => _guard(() async {
+        final rows = await _client
+            .from('event_responses')
+            .select('event_id, cadet_id, status, reason, responded_at, attended')
+            .eq('cadet_id', _user.id);
+        return [for (final r in rows) responseFromRow(r)];
+      }, 'load your replies');
+
+  @override
+  Future<void> respondToEvent(String eventId, Attendance status, {String? reason}) async {
+    try {
+      await _client.rpc('respond_to_event', params: {'eid': eventId, 'status': status.name, 'reason': reason});
+    } on PostgrestException catch (e) {
+      const known = ['closed', 'reason', 'not found', 'does not ask'];
+      throw UnitDataFailure(known.any(e.message.contains) ? '${e.message}.' : "Couldn't send your reply. Check your connection and try again.");
+    } catch (_) {
+      throw const UnitDataFailure("Couldn't send your reply. Check your connection and try again.");
+    }
+  }
+
+  @override
+  Future<List<EventResponse>> eventResponses(String eventId) => _guard(() async {
+        final rows = await _client
+            .from('event_responses')
+            .select('event_id, cadet_id, status, reason, responded_at, attended, profiles!event_responses_cadet_id_fkey(full_name, rank)')
+            .eq('event_id', eventId);
+        return [for (final r in rows) responseFromRow(r)];
+      }, 'load the replies');
+
+  @override
+  Future<void> markAttendance(String eventId, String cadetId, bool attended) => _guard(() async {
+        final mark = {'attended': attended, 'marked_by': _user.id, 'marked_at': DateTime.now().toUtc().toIso8601String()};
+        final updated = await _client
+            .from('event_responses')
+            .update(mark)
+            .eq('event_id', eventId)
+            .eq('cadet_id', cadetId)
+            .select('cadet_id');
+        // Came without replying: record them as coming.
+        if (updated.isEmpty) {
+          await _client.from('event_responses').insert({'event_id': eventId, 'cadet_id': cadetId, 'status': 'coming', ...mark});
+        }
+      }, 'mark attendance');
 
   @override
   Future<List<DiaryEntry>> diary() => _guard(() async {
@@ -509,6 +569,19 @@ Announcement announcementFromRow(Map<String, dynamic> r) {
   );
 }
 
+EventResponse responseFromRow(Map<String, dynamic> r) {
+  final p = (r['profiles'] ?? r['profiles!event_responses_cadet_id_fkey']) as Map<String, dynamic>?;
+  return EventResponse(
+    eventId: r['event_id'] as String,
+    cadetId: r['cadet_id'] as String,
+    cadetName: p == null ? '' : [if (p['rank'] != null) p['rank'], p['full_name']].join(' '),
+    status: r['status'] == 'absent' ? Attendance.absent : Attendance.coming,
+    reason: r['reason'] as String?,
+    respondedAt: r['responded_at'] == null ? null : _time(r['responded_at']),
+    attended: r['attended'] as bool?,
+  );
+}
+
 CalendarEvent eventFromRow(Map<String, dynamic> r) => CalendarEvent(
       id: r['id'] as String,
       title: r['title'] as String,
@@ -516,6 +589,9 @@ CalendarEvent eventFromRow(Map<String, dynamic> r) => CalendarEvent(
       startsAt: _time(r['starts_at']),
       endsAt: r['ends_at'] == null ? null : _time(r['ends_at']),
       location: r['location'] as String?,
+      details: r['details'] as String?,
+      needsResponse: r['needs_response'] as bool? ?? false,
+      respondBy: r['respond_by'] == null ? null : _time(r['respond_by']),
     );
 
 const _sessionDb = {

@@ -1,8 +1,11 @@
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../core/theme/tokens.dart';
 import '../../data/models/comms.dart';
+import '../../data/providers.dart';
 
 /// Centres page content and caps its width on large screens.
 class PageBody extends StatelessWidget {
@@ -165,14 +168,17 @@ IconData eventIcon(EventKind k) => switch (k) {
       EventKind.event => Icons.event_outlined,
     };
 
-class EventTile extends StatelessWidget {
+class EventTile extends ConsumerWidget {
   const EventTile(this.event, {super.key});
 
   final CalendarEvent event;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final c = Theme.of(context).colorScheme;
+    final isAno = ref.watch(authControllerProvider)?.role.isAno ?? false;
+    final reply = isAno ? null : ref.watch(myResponsesProvider).where((r) => r.eventId == event.id).firstOrNull?.status;
+    final asks = event.needsResponse && !isAno;
     final day = DateFormat('d').format(event.startsAt);
     final month = DateFormat('MMM').format(event.startsAt).toUpperCase();
     final when = event.endsAt == null
@@ -196,8 +202,17 @@ class EventTile extends StatelessWidget {
         ]),
       ),
       title: Text(event.title),
-      subtitle: Text([when, if (event.location != null) event.location!].join(' · ')),
-      trailing: Icon(eventIcon(event.kind), color: c.onSurfaceVariant),
+      subtitle: Text([
+        when,
+        if (event.location != null) event.location!,
+        if (event.needsResponse && isAno) 'roll-call',
+        if (asks) reply == null ? 'reply needed' : (reply == Attendance.coming ? "you're coming" : "you can't come"),
+      ].join(' · ')),
+      trailing: Icon(
+        asks ? (reply == null ? Icons.how_to_vote_outlined : Icons.check_circle_outline) : eventIcon(event.kind),
+        color: asks && reply == null ? c.primary : c.onSurfaceVariant,
+      ),
+      onTap: () => GoRouter.of(context).push('/event/${Uri.encodeComponent(event.id)}'),
     );
   }
 }

@@ -215,6 +215,49 @@ class EventsController extends LiveListController<CalendarEvent> {
   }
 }
 
+/// The member's own roll-call replies, by event id.
+final myResponsesProvider = NotifierProvider<MyResponsesController, List<EventResponse>>(MyResponsesController.new);
+
+class MyResponsesController extends LiveListController<EventResponse> {
+  @override
+  List<EventResponse> demo() => const [];
+
+  @override
+  Future<List<EventResponse>> fetch(UnitRepository repo) => repo.myResponses();
+
+  EventResponse? forEvent(String id) {
+    for (final r in state) {
+      if (r.eventId == id) return r;
+    }
+    return null;
+  }
+
+  /// Sends a reply (kept on the phone in sample mode). Throws UnitDataFailure.
+  Future<void> respond(String eventId, Attendance status, {String? reason}) async {
+    await repo?.respondToEvent(eventId, status, reason: reason);
+    final me = ref.read(authControllerProvider);
+    final reply = EventResponse(
+      eventId: eventId,
+      cadetId: me?.id ?? '',
+      cadetName: me?.displayName ?? '',
+      status: status,
+      reason: status == Attendance.absent ? reason?.trim() : null,
+      respondedAt: ref.read(clockProvider)(),
+    );
+    state = [for (final r in state) if (r.eventId != eventId) r, reply];
+  }
+}
+
+/// Upcoming roll-calls the member hasn't answered yet, soonest first.
+final pendingRollCallsProvider = Provider<List<CalendarEvent>>((ref) {
+  final now = ref.watch(clockProvider)();
+  final replied = {for (final r in ref.watch(myResponsesProvider)) r.eventId};
+  return [
+    for (final e in ref.watch(upcomingEventsProvider))
+      if (e.repliesOpen(now) && !replied.contains(e.id)) e,
+  ];
+});
+
 /// Upcoming events, soonest first.
 final upcomingEventsProvider = Provider<List<CalendarEvent>>((ref) {
   final now = ref.watch(clockProvider)();

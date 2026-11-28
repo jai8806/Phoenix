@@ -7,6 +7,7 @@ import '../../core/router/app_router.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/tokens.dart';
 import '../../data/providers.dart';
+import '../shared/event_screen.dart';
 import '../shared/widgets.dart';
 import 'study_screens.dart';
 
@@ -19,6 +20,7 @@ class TodayScreen extends ConsumerWidget {
     final now = ref.watch(clockProvider)();
     final upcoming = ref.watch(upcomingEventsProvider).take(3).toList();
     final announcements = ref.watch(announcementsProvider).take(2).toList();
+    final toReply = ref.watch(pendingRollCallsProvider);
     final t = Theme.of(context).textTheme;
     final c = Theme.of(context).colorScheme;
     final greeting = now.hour < 12 ? 'Good morning' : (now.hour < 17 ? 'Good afternoon' : 'Good evening');
@@ -35,6 +37,11 @@ class TodayScreen extends ConsumerWidget {
             Text(user!.unitName!, style: t.bodyMedium?.copyWith(color: c.onSurfaceVariant)),
           const SizedBox(height: Space.xl),
           const _SyncBanner(),
+          if (toReply.isNotEmpty) ...[
+            SectionHeader(toReply.length == 1 ? 'Needs your reply' : 'Needs your reply (${toReply.length})'),
+            for (final e in toReply.take(3)) ReplyCard(key: ValueKey('reply-${e.id}'), event: e, compact: true),
+            const SizedBox(height: Space.md),
+          ],
           const _ExamCountdownCard(),
           const SizedBox(height: Space.md),
           const _TodayPlanCard(),

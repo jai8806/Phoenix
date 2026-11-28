@@ -89,6 +89,31 @@ class FakeUnitRepo implements UnitRepository {
   @override
   Future<void> addEvent(CalendarEvent event) async => eventsList.add(event);
 
+  final responsesList = <EventResponse>[];
+  String meId = 'u1';
+
+  @override
+  Future<List<EventResponse>> myResponses() async => responsesList.where((r) => r.cadetId == meId).toList();
+
+  @override
+  Future<void> respondToEvent(String eventId, Attendance status, {String? reason}) async {
+    responsesList.removeWhere((r) => r.eventId == eventId && r.cadetId == meId);
+    responsesList.add(EventResponse(eventId: eventId, cadetId: meId, status: status, reason: reason, respondedAt: now));
+  }
+
+  @override
+  Future<List<EventResponse>> eventResponses(String eventId) async => responsesList.where((r) => r.eventId == eventId).toList();
+
+  @override
+  Future<void> markAttendance(String eventId, String cadetId, bool attended) async {
+    final i = responsesList.indexWhere((r) => r.eventId == eventId && r.cadetId == cadetId);
+    if (i >= 0) {
+      responsesList[i] = responsesList[i].copyWith(attended: () => attended);
+    } else {
+      responsesList.add(EventResponse(eventId: eventId, cadetId: cadetId, status: Attendance.coming, attended: attended));
+    }
+  }
+
   @override
   Future<List<DiaryEntry>> diary() async => List.of(diaryList);
 
@@ -665,6 +690,92 @@ void main() {
     expect(find.text('•'), findsWidgets);
     expect(find.textContaining('**'), findsNothing);
     expect(find.textContaining('Magnetic north', findRichText: true), findsWidgets);
+  });
+
+  CalendarEvent rollCallEvent() => CalendarEvent(
+        id: 'ev1', title: 'Republic Day rehearsal', kind: EventKind.parade,
+        startsAt: now.add(const Duration(days: 2)), location: 'RVCE ground',
+        details: 'Reporting 0630. Full uniform.', needsResponse: true,
+        respondBy: now.add(const Duration(days: 1)));
+
+  testWidgets('cadet replies to a roll-call from Today, with a reason when absent', (tester) async {
+    final repo = FakeUnitRepo()..eventsList.add(rollCallEvent());
+    await pumpLive(tester, cadet, repo: repo);
+    expect(find.text('NEEDS YOUR REPLY'), findsOneWidget);
+    expect(find.text('Republic Day rehearsal'), findsWidgets);
+
+    await tester.tap(find.widgetWithText(OutlinedButton, "Can't come"));
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    await tester.tap(find.widgetWithText(FilledButton, 'Send'));
+    await tester.pump();
+    expect(find.text('Write why you need to be absent.'), findsOneWidget);
+    await tester.tap(find.text('University exam'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Send'));
+    await tester.pumpAndSettle();
+
+    expect(repo.responsesList.single.status, Attendance.absent);
+    expect(repo.responsesList.single.reason, 'University exam');
+    expect(find.text('NEEDS YOUR REPLY'), findsNothing);
+    expect(find.textContaining("you can't come"), findsOneWidget);
+
+    // Changing their mind on the event page
+    await tester.tap(find.text('Republic Day rehearsal'));
+    await tester.pumpAndSettle();
+    expect(find.text('Reporting 0630. Full uniform.'), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, "I'll be there"));
+    await tester.pumpAndSettle();
+    expect(repo.responsesList.single.status, Attendance.coming);
+    expect(find.text("You're coming"), findsOneWidget);
+  });
+
+  testWidgets('ANO adds a roll-call event and sees counts, reasons and who has not replied', (tester) async {
+    final repo = FakeUnitRepo();
+    repo.membersList.addAll(const [
+      AppUser(id: 'u3', fullName: 'Arjun Rao', role: AppRole.cadet, unitId: 'unit-1'),
+      AppUser(id: 'u4', fullName: 'Divya Shetty', role: AppRole.seniorCadet, unitId: 'unit-1'),
+    ]);
+    final (c, _) = await pumpLive(tester, ano, repo: repo, size: const Size(1280, 1000));
+    c.read(routerProvider).go(Routes.commandCalendar);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Add event'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, 'Title'), 'Social service camp');
+    await tester.enterText(find.widgetWithText(TextField, 'Message for cadets (optional)'), 'Bring gloves.');
+    expect(find.text('Ask cadets to confirm'), findsOneWidget);
+    await tester.tap(find.descendant(of: find.byType(AlertDialog), matching: find.widgetWithText(FilledButton, 'Add event')));
+    await tester.pumpAndSettle();
+    final ev = repo.eventsList.single;
+    expect(ev.needsResponse, isTrue);
+    expect(ev.details, 'Bring gloves.');
+    expect(ev.respondBy, ev.startsAt.subtract(const Duration(hours: 12)));
+
+    repo.responsesList.addAll([
+      EventResponse(eventId: ev.id, cadetId: 'u1', cadetName: 'Meera Nair', status: Attendance.coming),
+      EventResponse(eventId: ev.id, cadetId: 'u3', cadetName: 'Arjun Rao', status: Attendance.absent, reason: 'Lab internal'),
+    ]);
+    await tester.tap(find.text('Social service camp'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Coming · refreshments'), findsOneWidget);
+    expect(find.text('Arjun Rao'), findsOneWidget);
+    expect(find.text('Lab internal'), findsOneWidget);
+    await tester.tap(find.text('No reply 1'));
+    await tester.pumpAndSettle();
+    expect(find.text('Divya Shetty'), findsOneWidget);
+    expect(find.text('Kavitha Iyer'), findsNothing); // the ANO isn't on her own roll-call
+
+    // On the day: tick who turned up
+    await tester.tap(find.text('Coming 1'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Mark who came'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(CheckboxListTile, 'Meera Nair'));
+    await tester.pumpAndSettle();
+    expect(repo.responsesList.firstWhere((r) => r.cadetId == 'u1').attended, isTrue);
+    expect(find.text('Present on the day'), findsOneWidget);
   });
 
   group('row mapping', () {

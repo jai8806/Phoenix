@@ -56,6 +56,9 @@ class _NewEventDialog extends ConsumerStatefulWidget {
 class _NewEventDialogState extends ConsumerState<_NewEventDialog> {
   final _title = TextEditingController();
   final _location = TextEditingController();
+  final _details = TextEditingController();
+  bool _rollCall = true;
+  int _closeHoursBefore = 12; // 0 = until it starts
   EventKind _kind = EventKind.parade;
   late DateTime _date = ref.read(clockProvider)().add(const Duration(days: 1));
   TimeOfDay _time = const TimeOfDay(hour: 7, minute: 0);
@@ -65,6 +68,7 @@ class _NewEventDialogState extends ConsumerState<_NewEventDialog> {
   void dispose() {
     _title.dispose();
     _location.dispose();
+    _details.dispose();
     super.dispose();
   }
 
@@ -80,13 +84,20 @@ class _NewEventDialogState extends ConsumerState<_NewEventDialog> {
       _busy = true;
       _saveError = null;
     });
+    final starts = DateTime(_date.year, _date.month, _date.day, _time.hour, _time.minute);
+    final now = ref.read(clockProvider)();
+    var closes = starts.subtract(Duration(hours: _closeHoursBefore));
+    if (!closes.isAfter(now)) closes = starts; // too late for the chosen cut-off: replies stay open until it starts
     try {
       await ref.read(eventsProvider.notifier).add(CalendarEvent(
             id: 'e${DateTime.now().microsecondsSinceEpoch}',
             title: _title.text.trim(),
             kind: _kind,
-            startsAt: DateTime(_date.year, _date.month, _date.day, _time.hour, _time.minute),
+            startsAt: starts,
             location: _location.text.trim().isEmpty ? null : _location.text.trim(),
+            details: _details.text.trim().isEmpty ? null : _details.text.trim(),
+            needsResponse: _rollCall,
+            respondBy: _rollCall && _closeHoursBefore > 0 ? closes : null,
           ));
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
@@ -103,7 +114,7 @@ class _NewEventDialogState extends ConsumerState<_NewEventDialog> {
       title: const Text('Add event'),
       content: SizedBox(
         width: 420,
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
+        child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
           TextField(
             controller: _title,
             autofocus: true,
@@ -148,11 +159,36 @@ class _NewEventDialogState extends ConsumerState<_NewEventDialog> {
           ]),
           const SizedBox(height: Space.md),
           TextField(controller: _location, decoration: const InputDecoration(labelText: 'Location (optional)')),
+          const SizedBox(height: Space.md),
+          TextField(
+            controller: _details,
+            minLines: 2,
+            maxLines: 6,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: const InputDecoration(labelText: 'Message for cadets (optional)', hintText: 'Dress code, what to bring, reporting time…'),
+          ),
+          const SizedBox(height: Space.sm),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Ask cadets to confirm'),
+            subtitle: const Text("Cadets reply \"I'll be there\" or give a reason. You get the count and the list."),
+            value: _rollCall,
+            onChanged: (v) => setState(() => _rollCall = v),
+          ),
+          if (_rollCall)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Wrap(spacing: Space.sm, runSpacing: Space.sm, crossAxisAlignment: WrapCrossAlignment.center, children: [
+                Text('Replies close', style: Theme.of(context).textTheme.bodyMedium),
+                for (final (h, label) in const [(0, 'when it starts'), (12, '12 h before'), (24, '24 h before')])
+                  ChoiceChip(label: Text(label), selected: _closeHoursBefore == h, onSelected: (_) => setState(() => _closeHoursBefore = h)),
+              ]),
+            ),
           if (_saveError != null) ...[
             const SizedBox(height: Space.md),
             Text(_saveError!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
           ],
-        ]),
+        ])),
       ),
       actions: [
         TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
